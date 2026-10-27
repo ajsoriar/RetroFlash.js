@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SWF Reader - Phase 1</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif}body{max-width:1150px;margin:35px auto;padding:0 18px;background:#111827;color:#e5e7eb}
+h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}#drop{display:block;padding:30px;border:2px dashed #6b7280;border-radius:14px;text-align:center;cursor:pointer;margin:25px 0;background:#1f2937}#drop.over{border-color:#67e8f9}
+#meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.metric{background:#1f2937;padding:12px;border-radius:8px}.metric strong{display:block;margin-top:5px;font-size:20px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;border-bottom:1px solid #374151;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#111827}.tablewrap{max-height:460px;overflow:auto}#status{white-space:pre-wrap}#preview{max-width:100%;border:1px solid #374151;background:#000}input[type=file]{display:none}
+.decoded{color:#86efac}.partial{color:#fcd34d}.indexed{color:#9ca3af}.unknown,.not-executed{color:#c4b5fd}.invalid,.error{color:#fca5a5}.warning{color:#fcd34d}.details{font-family:ui-monospace,monospace;font-size:12px;color:#d1d5db}.empty{color:#6b7280}
+</style>
+</head>
+<body>
+<h1>SWF Reader <small>v0.2 · Phase 1</small></h1>
+<p>Structure inspection only: header, tag index (including DefineSprite contents), and decoded placement records
+(MATRIX, CXFORM, CXFORMWITHALPHA). No rendering. ActionScript is detected and listed, never executed. No external libraries.</p>
+<label id="drop" for="file">Drop a .swf file here or click to open one</label>
+<input id="file" type="file" accept=".swf,application/x-shockwave-flash">
+<p id="status">Select a file to get started. Test files: <code>tests/fixtures/</code>; expected results: <code>tests/COMPATIBILITY.md</code>.</p>
+<section id="meta"></section>
+<h2>Stage (dimensions and background color only)</h2>
+<canvas id="preview" width="550" height="320"></canvas>
+<h2>Diagnostics</h2>
+<div class="tablewrap"><table><thead><tr><th>Level</th><th>Code</th><th>Tag path</th><th>Message</th></tr></thead><tbody id="diagnostics"></tbody></table></div>
+<h2>Not supported yet</h2>
+<div class="tablewrap"><table><thead><tr><th>Feature</th><th>Count</th><th>First at</th><th>Reason</th></tr></thead><tbody id="unsupported"></tbody></table></div>
+<h2>SWF Tags</h2>
+<div class="tablewrap"><table><thead><tr><th>Path</th><th>Frame</th><th>Code</th><th>Type</th><th>Status</th><th>Offset</th><th>Bytes</th><th>Decoded fields</th></tr></thead><tbody id="tags"></tbody></table></div>
+<script src="../src/swf-reader.js"></script>
+<script>
+(function(){
+  'use strict';
+  var MAX_ROWS=5000;
+  var input=document.getElementById('file'), drop=document.getElementById('drop'), status=document.getElementById('status');
+  var meta=document.getElementById('meta'), tagBody=document.getElementById('tags'), canvas=document.getElementById('preview');
+  var diagBody=document.getElementById('diagnostics'), unsupportedBody=document.getElementById('unsupported');
+  // All file-derived text goes through textContent: names and labels inside the SWF are untrusted.
+  function cell(row,value,className){var td=document.createElement('td');td.textContent=String(value);if(className)td.className=className;row.appendChild(td);return td;}
+  function row(body,values,classes){var tr=document.createElement('tr');values.forEach(function(v,i){cell(tr,v,classes&&classes[i]);});body.appendChild(tr);return tr;}
+  function emptyRow(body,columns,text){var tr=document.createElement('tr');var td=cell(tr,text,'empty');td.colSpan=columns;body.appendChild(tr);}
+  function metric(label,value){var el=document.createElement('div');el.className='metric';var title=document.createElement('span');title.textContent=label;var number=document.createElement('strong');number.textContent=String(value);el.appendChild(title);el.appendChild(number);meta.appendChild(el);}
+  function px(twips){return +(twips/20).toFixed(2);}
+  function matrixText(m){
+    var parts=[];
+    if(m.hasScale)parts.push('scale '+m.scaleX+','+m.scaleY);
+    if(m.hasRotate)parts.push('skew '+m.rotateSkew0+','+m.rotateSkew1);
+    parts.push('translate '+px(m.translateX)+','+px(m.translateY)+' px');
+    return 'matrix('+parts.join(' · ')+')';
+  }
+  function cxformText(c){
+    var ch=['red','green','blue','alpha'].filter(function(n){return (n+'Mult') in c;});
+    return 'cxform(mult '+ch.map(function(n){return c[n+'Mult'];}).join('/')+' · add '+ch.map(function(n){return c[n+'Add'];}).join('/')+')';
+  }
+  function describe(tag){
+    var f=tag.fields;
+    if(tag.status==='invalid'&&!f)return 'invalid body — see diagnostics';
+    if(!f)return '';
+    var out=[];
+    switch(tag.code){
+      case 9: return '#'+[f.r,f.g,f.b].map(function(v){return ('0'+v.toString(16)).slice(-2);}).join('');
+      case 43: return JSON.stringify(f.name)+(f.namedAnchor?' (named anchor)':'');
+      case 69: return ['actionScript3','useNetwork','hasMetadata','useGPU','useDirectBlit'].filter(function(k){return f[k];}).join(', ')||'no flags';
+      case 39: return 'id '+f.spriteId+' · '+(tag.actualFrameCount===undefined?'?':tag.actualFrameCount)+'/'+f.frameCount+' frames · '+tag.children.length+' tags';
+      case 5: return 'character '+f.characterId+' · depth '+f.depth;
+      case 28: return 'depth '+f.depth;
+      case 4: case 26: case 70:
+        out.push((f.move?'move ':'')+'depth '+f.depth);
+        if(f.characterId!==undefined)out.push('character '+f.characterId);
+        if(f.className!==undefined)out.push('class '+JSON.stringify(f.className));
+        if(f.matrix)out.push(matrixText(f.matrix));
+        if(f.colorTransform)out.push(cxformText(f.colorTransform));
+        if(f.ratio!==undefined)out.push('ratio '+f.ratio);
+        if(f.name!==undefined)out.push('name '+JSON.stringify(f.name));
+        if(f.clipDepth!==undefined)out.push('clipDepth '+f.clipDepth);
+        if(f.blendMode!==undefined)out.push('blendMode '+f.blendMode);
+        if(f.bitmapCache!==undefined)out.push('bitmapCache '+f.bitmapCache);
+        if(tag.unparsed)out.push('not decoded: '+tag.unparsed.join(', '));
+        return out.join(' · ');
+    }
+    return '';
+  }
+  function reset(){[meta,tagBody,diagBody,unsupportedBody].forEach(function(el){el.replaceChildren();});}
+  async function open(file){
+    if(!file)return;
+    status.textContent='Reading '+file.name+'…';reset();
+    try{
+      var swf=await SWFReader.load(file);
+      var errors=swf.diagnostics.filter(function(d){return d.level==='error';}).length;
+      status.textContent=file.name+' — '+(swf.diagnostics.length?swf.diagnostics.length+' diagnostic(s), '+errors+' error(s); see below':'structure read without diagnostics');
+      metric('Format',swf.signature+' (SWF '+swf.version+')');metric('Compression',swf.compression);
+      metric('Stage',swf.width+' × '+swf.height+' px');metric('FPS',swf.fps);
+      metric('Frames',swf.actualFrameCount+' / '+swf.frameCount);metric('Tags',swf.tags.length+' top · '+swf.totalTagCount+' total');
+      metric('Sprites',swf.spriteCount);metric('File size',swf.sourceLength+' bytes');
+      metric('Scripts (not executed)',swf.codeTags.avm1+' AVM1 · '+swf.codeTags.avm2+' AVM2');
+      metric('Diagnostics',swf.diagnostics.length);
+      canvas.width=Math.max(1,Math.min(4096,Math.ceil(swf.width)));
+      canvas.height=Math.max(1,Math.min(4096,Math.ceil(swf.height)));
+      var ctx=canvas.getContext('2d');var bg=swf.background;
+      ctx.fillStyle=bg?'rgb('+bg.r+','+bg.g+','+bg.b+')':'#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      swf.diagnostics.forEach(function(d){row(diagBody,[d.level,d.code,d.path===undefined?'—':d.path,d.message],[d.level]);});
+      if(!swf.diagnostics.length)emptyRow(diagBody,4,'None');
+      swf.unsupported.forEach(function(u){row(unsupportedBody,[u.feature,u.count,u.firstPath,u.reason]);});
+      if(!swf.unsupported.length)emptyRow(unsupportedBody,4,'Nothing: every tag in this file was decoded');
+
+      var fragment=document.createDocumentFragment(), shown=0;
+      swf.walkTags(function(tag){
+        if(++shown>MAX_ROWS)return;
+        var tr=document.createElement('tr');
+        cell(tr,tag.path);cell(tr,tag.frame);cell(tr,tag.code);
+        var type=cell(tr,tag.name+(tag.longHeader?' (long header)':''));type.style.paddingLeft=(8+tag.level*18)+'px';
+        cell(tr,tag.status,tag.status);cell(tr,tag.offset);cell(tr,tag.length);cell(tr,describe(tag),'details');
+        fragment.appendChild(tr);
+      });
+      tagBody.appendChild(fragment);
+      if(shown>MAX_ROWS)emptyRow(tagBody,8,(shown-MAX_ROWS)+' more tags not shown (use window.currentSWF in DevTools)');
+      window.currentSWF=swf; // optional access from DevTools
+      console.log('SWF loaded:',swf);
+    }catch(err){status.textContent='Error'+(err.code?' '+err.code:'')+': '+err.message;console.error(err);}
+  }
+  input.addEventListener('change',function(){open(input.files[0]);});
+  drop.addEventListener('dragover',function(e){e.preventDefault();drop.classList.add('over');});
+  drop.addEventListener('dragleave',function(){drop.classList.remove('over');});
+  drop.addEventListener('drop',function(e){e.preventDefault();drop.classList.remove('over');open(e.dataTransfer.files[0]);});
+})();
+</script>
+</body>
+</html>

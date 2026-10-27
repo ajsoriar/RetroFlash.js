@@ -1,0 +1,14 @@
+{
+  "name": "retroflash.js",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dependency-free Flash SWF player and ActionScript runtime in JavaScript and Canvas (in development).",
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/run.js",
+    "fixtures": "node tests/fixtures/build-fixtures.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

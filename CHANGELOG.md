@@ -6,9 +6,32 @@
 
 - **The player source is split into modules.** `src/retroflash.js` is now only the public API. The rest is in `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/input/`, and `src/render/`, as classic scripts loaded in the order of `src/modules.json`. Behaviour and the public API do not change.
 - `RetroFlash.internals` now exposes every module export.
+- **Movie state is split in two.**
+  - The display context (`createEnv`) keeps the dictionary, the limits, and the instance count.
+  - A new `ActionScheduler` (`env.scripts`, in `src/avm1/interpreter.js`) owns the AVM1 queue, the parsed-action cache, and the budgets.
+  - `runActionQueue(env)` is now `env.scripts.run()`.
+  - The shared `quiet` flag is gone: a scrubbing seek and a button's hit area drop the scripts they queue (`mark()`/`dropSince()`).
+  - The AVM1 modules now load before `display/`.
+- `maxActionBlocks` counts every action block: two `DoAction` tags in one frame count as two. The old limit counted queue entries.
+- The AVM1 budgets now cover a whole tick or input event, as documented. A tick that ran the queue twice (frame scripts, then the actions of a button that appeared under the pointer) used to get the budget twice. `env.scripts.beginUpdate()` opens a new budget.
+
+- **AVM1 execution goes through the decoder.**
+  - Each action block runs in its own `Activation`, which follows a program counter over the decoded code (`executeAVM1`). It replaces the walk over the action list in file order, which could not follow a branch.
+  - `parseActions`, `actionString`, `actionUI16`, and `functionCodeSize` are replaced by `ActionCode`.
+  - The executed subset is unchanged. Two malformed cases now end the script with `avm1:malformedAction`:
+    - a `GotoFrame` whose operand is shorter than 2 bytes, which used to jump to an undefined frame;
+    - a function definition whose body runs past the block, which used to skip silently to the end.
 
 ### Added
 
+- **AVM1 decoder** (`ActionCode` in `src/avm1/decoder.js`), written against SWF19. It decodes action records and their operands without executing them.
+  - **Operands:** `Push` values of every type, the constant pool, registers, function definitions (with their `DefineFunction2` flags), `With` and `Try` bodies, `GetURL`/`GetURL2`, `GotoFrame2`, and `WaitForFrame`/`WaitForFrame2`.
+  - **Branches:** targets are measured from the next record and checked against the block.
+  - **Decoding:** records are decoded on demand at any offset, so a branch inside another record works.
+  - **Errors:** `TRUNCATED_RECORD`, `INVALID_OPERANDS`, `INVALID_BRANCH`, and `INVALID_RANGE`.
+  - **Versions:** each record carries the SWF version that introduced its action.
+  - **Tests:** `tests/unit/avm1-decoder.test.js`.
+- **Configurable limits.** `maxNesting`, `maxInstances`, `maxActionBlocks`, and `maxActionSteps` are now Player options, like `maxBitmapPixels` and `maxTotalBitmapPixels`. Each limit must be a positive integer, or the player throws `INVALID_OPTION`; earlier, 0 meant the default. `RetroFlash.defaultLimits` holds the defaults, and `player.limits` the limits in force.
 - **Build:** `npm run build` writes `dist/retroflash.min.js`, one minified file with the reader and the player, and its source map. It uses terser, the project's only development dependency (`npm install`). The tests and the demos still install nothing.
 - `npm run test:dist` runs the test suite against the bundle. `tests/unit/build.test.js` checks the module manifest and the demo's script list.
 

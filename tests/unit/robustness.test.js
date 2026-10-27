@@ -20,10 +20,10 @@ const end = () => B.tag(B.T.End);
 async function run(tags, opts = {}) {
   const swf = await SWFReader.load(B.swf({ version: opts.version || 6, frameCount: opts.frameCount || 1, tags }));
   const movie = new I.Movie(swf), reported = [];
-  const env = I.createEnv(movie, (feature) => reported.push(feature));
+  const env = I.createEnv(movie, (feature) => reported.push(feature), { limits: I.resolveLimits(opts.limits) });
   const root = new I.Clip(env, movie.root, 0, null);
   root.gotoFrame(1);
-  I.runActionQueue(env);
+  env.scripts.run();
   return { swf, movie, env, root, reported };
 }
 
@@ -59,7 +59,7 @@ test('press outside, then release over a button: the button gets its roll over',
   input.move(1000, 1000);
   assert.strictEqual(obj.button.state, 'up', 'no roll events while the mouse is held');
   assert.strictEqual(input.up(), true);
-  I.runActionQueue(env);
+  env.scripts.run();
   assert.strictEqual(obj.button.state, 'over');
   assert.strictEqual(root.frame, 2, 'roll-over action ran');
 });
@@ -157,9 +157,9 @@ test('an oversized JPEG is refused from its header, before the browser decodes i
 });
 
 // Player on a stand-in canvas whose 2D context ignores every call.
-function headlessPlayer() {
+function headlessPlayer(options) {
   const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : () => ({ addColorStop() {} })), set: (t, k, v) => { t[k] = v; return true; } });
-  return new RetroFlash.Player({ canvas: { getContext: () => ctx, style: {}, width: 0, height: 0 }, input: false });
+  return new RetroFlash.Player(Object.assign({ canvas: { getContext: () => ctx, style: {}, width: 0, height: 0 }, input: false }, options));
 }
 // Replaces SWFReader.load so each input can wait before parsing.
 async function withDelayedReader(delays, fn) {
@@ -207,4 +207,80 @@ test('a load that fails after destroy() leaves the player destroyed', async () =
   player.destroy();
   assert.strictEqual(await pending, null);
   assert.strictEqual(player.state, 'destroyed', 'not revived as error');
+});
+
+// ---- Limits ---------------------------------------------------------------------------------------------------
+
+const sprite = (id, ...tags) => B.tag(B.T.DefineSprite, Buffer.concat([B.body((w) => w.u16(id).u16(1)), ...tags, show(), end()]));
+
+test('limits: defaults, overrides, and invalid values', () => {
+  const D = RetroFlash.defaultLimits;
+  assert.deepStrictEqual(Object.keys(D), ['maxNesting', 'maxInstances', 'maxBitmapPixels', 'maxTotalBitmapPixels', 'maxActionBlocks', 'maxActionSteps']);
+  assert.ok(Object.isFrozen(D));
+  assert.deepStrictEqual(headlessPlayer().limits, D);
+  const custom = headlessPlayer({ maxNesting: 4, maxActionSteps: 50, maxBitmapPixels: null });
+  assert.strictEqual(custom.limits.maxNesting, 4);
+  assert.strictEqual(custom.limits.maxActionSteps, 50);
+  assert.strictEqual(custom.limits.maxBitmapPixels, D.maxBitmapPixels, 'null takes the default');
+  for (const bad of [0, -1, 1.5, '10', NaN, Infinity]) {
+    assert.throws(() => headlessPlayer({ maxInstances: bad }), (err) => err.code === 'INVALID_OPTION' && /maxInstances/.test(err.message), String(bad));
+  }
+});
+
+test('limits: maxNesting and maxInstances bound sprite instances', async () => {
+  const nested = [square(1), sprite(3, place(1, 1)), sprite(2, place(1, 3)), place(1, 2), show(), end()];
+  const deep = await run(nested, { limits: { maxNesting: 1 } });
+  assert.ok(deep.reported.includes('render:nestingLimit'));
+  assert.ok(deep.root.displayList.get(1).clip, 'level 1 is created');
+  assert.strictEqual(deep.root.displayList.get(1).clip.displayList.get(1).clip, null, 'level 2 is not');
+  assert.ok(!(await run(nested)).reported.includes('render:nestingLimit'), 'the default allows it');
+
+  const many = await run([square(1), sprite(2, place(1, 1)), place(1, 2), place(2, 2), show(), end()], { limits: { maxInstances: 1 } });
+  assert.ok(many.reported.includes('render:instanceLimit'));
+  assert.ok(many.root.displayList.get(1).clip && !many.root.displayList.get(2).clip);
+});
+
+test('limits: maxActionBlocks counts every DoAction; maxActionSteps counts actions', async () => {
+  const twoScripts = [B.doAction(), B.doAction(B.A.stop()), show(), show(), end()];
+  const blocks = await run(twoScripts, { frameCount: 2, limits: { maxActionBlocks: 1 } });
+  assert.ok(blocks.reported.includes('avm1:budget'));
+  assert.strictEqual(blocks.root.playing, true, 'the second DoAction of the frame did not run');
+  assert.strictEqual((await run(twoScripts, { frameCount: 2 })).root.playing, false, 'by default it runs');
+
+  const steps = await run([B.doAction(B.A.play(), B.A.play(), B.A.stop()), show(), show(), end()], { frameCount: 2, limits: { maxActionSteps: 2 } });
+  assert.ok(steps.reported.includes('avm1:budget'));
+  assert.strictEqual(steps.root.playing, true, 'the third action did not run');
+});
+
+test('limits: the action budget covers a whole tick, and each input event gets a new one', async () => {
+  // Frame 2 places a button under the still pointer: the tick runs the frame script (play), then the roll-over
+  // (stop) in a second run. Pressing runs the press action (stop) in a new update.
+  const button = B.defineButton2(9, {
+    records: [{ states: { up: true, hit: true }, character: 1, depth: 1 }],
+    actions: [{ conditions: 1, records: [B.A.stop()] }, { conditions: 4, records: [B.A.stop()] }]
+  });
+  const tags = [square(1), button, show(), place(1, 9), B.doAction(B.A.play()), show(), show(), end()];
+  async function stepOverButton(maxActionSteps) {
+    const player = headlessPlayer({ maxActionSteps });
+    await player.load(B.swf({ version: 6, frameCount: 3, tags }));
+    Object.assign(player.input, { inside: true, x: 1000, y: 1000 });
+    player.step();
+    return player;
+  }
+  const roomy = await stepOverButton(2);
+  assert.strictEqual(roomy.getInfo().rootPlaying, false, 'with two steps, the roll-over runs');
+  const tight = await stepOverButton(1);
+  assert.strictEqual(tight.input.hovered.button.state, 'over');
+  assert.strictEqual(tight.getInfo().rootPlaying, true, 'the roll-over shares the budget the frame script used');
+  assert.ok(tight.getDiagnostics().unsupported.some((u) => u.feature === 'avm1:budget'));
+  assert.strictEqual(tight.input.down(), true);
+  tight.afterInput();
+  assert.strictEqual(tight.getInfo().rootPlaying, false, 'the press starts with a fresh budget');
+});
+
+test('limits: the player passes its limits to the movie', async () => {
+  const player = headlessPlayer({ maxActionSteps: 1 });
+  await player.load(B.swf({ version: 6, frameCount: 2, tags: [B.doAction(B.A.play(), B.A.stop()), show(), show(), end()] }));
+  assert.strictEqual(player.getInfo().rootPlaying, true, 'stop() was over budget');
+  assert.ok(player.getDiagnostics().unsupported.some((u) => u.feature === 'avm1:budget'));
 });

@@ -6,14 +6,15 @@ This file lists only what the tests demonstrate. Anything that is not listed her
 
 ```sh
 node tests/run.js                        # all tests (Node 16+, no npm install)
+npm run test:dist                        # the same tests against dist/retroflash.min.js (needs npm install)
 node tests/fixtures/build-fixtures.js    # regenerate the fixtures after changing the catalog
 node tests/inspect.js some.swf --tags    # inspect any SWF from the command line
 ```
 
 | Environment | `DecompressionStream` | Result (2026-10-27) |
 |---|---|---|
-| Node 16.15.0 (Windows) | test-only zlib polyfill (`tests/support/load-reader.js`) | 122 passed, 0 failed |
-| Node 22.13.0 (Windows) | native | 122 passed, 0 failed |
+| Node 16.15.0 (Windows) | test-only zlib polyfill (`tests/support/load-reader.js`) | 142 passed, 0 failed (sources and `dist` bundle) |
+| Node 22.13.0 (Windows) | native | 142 passed, 0 failed (sources and `dist` bundle) |
 | Chrome (headless, Windows) | native | Manual run of `demo/player.html`; see “Rendering” below. Not automated |
 
 The runtime does not ship the polyfill. In Node, it lets the reader's real streaming code run where the global is missing.
@@ -92,7 +93,20 @@ These are covered in `unit/*.test.js`:
   - `DefineFunction` and `DefineFunction2` followed by `stop()`: the body after the record is skipped and `stop()` runs;
   - image header sizes (JPEG `SOF0`/`SOF2` after `APP0`, PNG, GIF; scan before frame header, missing marker);
   - per-bitmap and per-movie pixel budgets, and a JPEG declaring 30000×30000 refused before decoding;
-  - two overlapping `load()` calls where the older one finishes last; a load superseded while decoding a bitmap, whose decoding failure must not reach the newer movie's diagnostics; and a failed load after `destroy()` (headless canvas stand-in).
+  - two overlapping `load()` calls where the older one finishes last; a load superseded while decoding a bitmap, whose decoding failure must not reach the newer movie's diagnostics; and a failed load after `destroy()` (headless canvas stand-in);
+  - player limits: defaults, overrides, invalid values (`INVALID_OPTION`), and `maxNesting`, `maxInstances`, `maxActionBlocks`, and `maxActionSteps` each cutting a movie built for it;
+  - one action budget per tick, shared by the frame scripts and the roll-over of a button that appears under the pointer, and a new budget for the next input event.
+- **AVM1 decoder** (`avm1-decoder.test.js`, byte layouts worked out by hand from the specification):
+  - record boundaries up to `ActionEndFlag`, and the bytes after it;
+  - the operands of every action that has them:
+    - `Push` values of every type, including the word order of doubles and negative integers;
+    - the flags of `GetURL2`, `GotoFrame2`, `DefineFunction2`, and `Try`;
+    - function, `With`, and `Try` bodies;
+  - branch targets measured from the next record, back to the start, at the end of the block, outside it (`INVALID_BRANCH`), and inside another record;
+  - strings decoded as Latin-1 before SWF 6 and as UTF-8 from SWF 6;
+  - the SWF version that introduced each action, and unknown codes;
+  - errors: `TRUNCATED_RECORD`, `INVALID_OPERANDS`, `INVALID_RANGE`, and offsets outside the block;
+  - in the interpreter: a malformed `GotoFrame` or function body ends the script, while a malformed action outside the subset is still reported and skipped.
 - **Text** (`text.test.js`, SWFs built in memory):
   - a DefineFont whose codes, name, and style come from DefineFontInfo;
   - a DefineText without its end byte (`TEXT_END_MISSING`), and a DefineFont2 glyph offset past the tag (`INVALID_OFFSET`, tag invalid);

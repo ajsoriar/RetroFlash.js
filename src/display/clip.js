@@ -3,13 +3,13 @@
   'use strict';
 
   var M = global.RetroFlashModules;
-  var MAX_NESTING = M.MAX_NESTING, MAX_INSTANCES = M.MAX_INSTANCES, IDENTITY = M.IDENTITY, toMatrix = M.toMatrix,
-    CX_IDENTITY = M.CX_IDENTITY, toColorTransform = M.toColorTransform;
+  var resolveLimits = M.resolveLimits, IDENTITY = M.IDENTITY, toMatrix = M.toMatrix, CX_IDENTITY = M.CX_IDENTITY,
+    toColorTransform = M.toColorTransform, ActionScheduler = M.ActionScheduler;
 
   /* A Clip is a running timeline (the root or a sprite instance) with its display list keyed by depth.
-     env = { characters, report(feature, reason, source) } plus, for ActionScript, the fields created by
-     createEnv(). Display objects are { depth, characterId, character, matrix, cx, ratio, name, clipDepth,
-     blendMode, clip }. `playing` is the timeline's own play state (AVM1 stop/play). */
+     `env` is the movie's display context (createEnv). Display objects are { depth, characterId, character,
+     matrix, cx, ratio, name, clipDepth, blendMode, clip }. `playing` is the timeline's own play state (AVM1
+     stop/play). */
   function Clip(env, def, level, parent) {
     this.env = env;
     this.def = def;
@@ -20,11 +20,16 @@
     this.playing = true;
     this.displayList = new Map();
   }
-  // Shared state for every Clip of one movie. options.actions: run frame scripts (default true).
+  /* The display context shared by every Clip of one movie: the dictionary, report(feature, reason, source),
+     the limits (resolveLimits), `instances` (sprite and button instances created in the current step; the
+     player resets it at each tick, seek and input event), and `scripts`, the movie's ActionScheduler.
+     options: { limits, actions } (actions: false queues no scripts). */
   function createEnv(movie, report, options) {
+    options = options || {};
+    var limits = options.limits || resolveLimits();
     return {
-      characters: movie.characters, swf: movie.swf, version: movie.swf.version, report: report,
-      actions: !options || options.actions !== false, quiet: false, queue: [], actionCache: new Map(), steps: 0, instances: 0
+      characters: movie.characters, swf: movie.swf, version: movie.swf.version, report: report, limits: limits,
+      instances: 0, scripts: new ActionScheduler(movie.swf, report, limits, options.actions)
     };
   }
   // Character ids of the sprites containing this clip (the root is 0).
@@ -36,9 +41,10 @@
   /* `level` and `ancestry` describe the container: they default to this clip's; button children pass the
      button's, so content nested through buttons is bounded too. Hostile files can make sprites or buttons
      contain themselves (possibly several times per level, which grows exponentially), so containers are
-     refused when they would contain themselves, nest deeper than MAX_NESTING, or exceed MAX_INSTANCES in one step (env.instances, reset by the player). */
+     refused when they would contain themselves, nest deeper than limits.maxNesting, or exceed
+     limits.maxInstances in one step (env.instances). */
   Clip.prototype.createObject = function (characterId, level, ancestry) {
-    var env = this.env, character = env.characters[characterId];
+    var env = this.env, character = env.characters[characterId], limits = env.limits;
     var obj = { characterId: characterId, character: character || null, matrix: IDENTITY, cx: CX_IDENTITY, clip: null };
     var container = character && (character.type === 'sprite' || character.type === 'button');
     level = level === undefined ? this.level : level;
@@ -47,10 +53,10 @@
       env.report('render:missingCharacter', 'A placement refers to a character id that is not defined; nothing is drawn.', characterId);
     } else if (container && ancestry.indexOf(characterId) >= 0) {
       env.report('render:recursiveCharacter', 'A sprite or button that contains itself is not instantiated again.', characterId);
-    } else if (container && level + 1 > MAX_NESTING) {
-      env.report('render:nestingLimit', 'Sprite and button instances nested deeper than ' + MAX_NESTING + ' levels are not created.', characterId);
-    } else if (container && (env.instances = (env.instances || 0) + 1) > MAX_INSTANCES) {
-      env.report('render:instanceLimit', 'More than ' + MAX_INSTANCES + ' sprite and button instances in one step; further ones are not created.', characterId);
+    } else if (container && level + 1 > limits.maxNesting) {
+      env.report('render:nestingLimit', 'Sprite and button instances nested deeper than ' + limits.maxNesting + ' levels are not created.', characterId);
+    } else if (container && ++env.instances > limits.maxInstances) {
+      env.report('render:instanceLimit', 'More than ' + limits.maxInstances + ' sprite and button instances in one step; further ones are not created.', characterId);
     } else if (character.type === 'sprite') {
       obj.clip = new Clip(env, character, level + 1, this);
       obj.clip.gotoFrame(1);
@@ -133,10 +139,7 @@
   };
   // Frame scripts (DoAction) of the frame just entered run after the current tick, in queue order.
   Clip.prototype.queueFrameActions = function (n) {
-    var env = this.env;
-    if (!env.queue || env.quiet || !env.actions) return;
-    var tags = this.def.frames[n - 1].filter(function (tag) { return tag.code === 12; });
-    if (tags.length) env.queue.push({ clip: this, tags: tags });
+    this.env.scripts.enqueue(this, this.def.frames[n - 1].filter(function (tag) { return tag.code === 12; }));
   };
   // One tick: existing child sprites advance first; then this timeline moves to its next frame (children it
   // places now start at their frame 1). A stopped timeline stays put but its children keep playing.

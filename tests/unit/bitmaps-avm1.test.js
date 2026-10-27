@@ -85,8 +85,8 @@ async function actionsMovie(options) {
   const env = I.createEnv(movie, (feature, reason, source) => reported.push(feature), options);
   const root = new I.Clip(env, movie.root, 0, null);
   root.gotoFrame(1);
-  I.runActionQueue(env);
-  const tick = (n = 1) => { for (let i = 0; i < n; i++) { root.tick(); I.runActionQueue(env); } };
+  env.scripts.run();
+  const tick = (n = 1) => { for (let i = 0; i < n; i++) { env.scripts.beginUpdate(); root.tick(); env.scripts.run(); } };
   return { root, env, reported, tick, spinner: () => root.displayList.get(1).clip, other: () => root.displayList.get(2).clip };
 }
 
@@ -122,16 +122,18 @@ test('AVM1: control flow ends the script (reported); unsupported actions never r
   assert.strictEqual(other().frame, 2);
 });
 
-test('AVM1: actions can be disabled; seeking in quiet mode does not run scripts', async () => {
+test('AVM1: actions can be disabled; scripts queued since a mark can be dropped (scrubbing seek)', async () => {
   const off = await actionsMovie({ actions: false });
   off.tick(5);
   assert.strictEqual(off.root.frame, 6, 'without scripts the root plays straight through');
+  assert.strictEqual(off.env.scripts.queue.length, 0, 'nothing is queued when actions are off');
   const on = await actionsMovie();
-  on.env.quiet = true;
+  const mark = on.env.scripts.mark();
   on.root.gotoFrame(3);
-  on.env.quiet = false;
-  I.runActionQueue(on.env);
-  assert.strictEqual(on.root.frame, 3, 'frame 3 script (gotoLabel) not run by a quiet seek');
+  assert.ok(on.env.scripts.queue.length > mark, 'entering frame 3 queued its script');
+  on.env.scripts.dropSince(mark);
+  on.env.scripts.run();
+  assert.strictEqual(on.root.frame, 3, 'frame 3 script (gotoLabel) not run after a scrubbing seek');
 });
 
 test('AVM1: target paths in slash and dot syntax', async () => {
@@ -148,8 +150,8 @@ test('AVM1: target paths in slash and dot syntax', async () => {
 });
 
 test('AVM1: action records parse with lengths; truncated records are flagged', () => {
-  const list = I.parseActions(Uint8Array.from([0x07, 0x81, 2, 0, 4, 0, 0x06, 0x00, 0x07]));
+  const list = new I.ActionCode(Uint8Array.from([0x07, 0x81, 2, 0, 4, 0, 0x06, 0x00, 0x07]), 6).list();
   assert.deepStrictEqual(list.map((a) => [a.code, a.offset, a.data.length]), [[0x07, 0, 0], [0x81, 1, 2], [0x06, 6, 0]]);
   assert.strictEqual(list.truncated, false);
-  assert.strictEqual(I.parseActions(Uint8Array.from([0x81, 9, 0, 1])).truncated, true);
+  assert.strictEqual(new I.ActionCode(Uint8Array.from([0x81, 9, 0, 1]), 6).list().truncated, true);
 });

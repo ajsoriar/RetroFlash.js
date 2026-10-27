@@ -24,14 +24,11 @@
     this.state = null;
     this.displayList = new Map();
     this.hitList = new Map();
-    var self = this, env = this.env, wasQuiet = env.quiet;
-    // Hit-area children are never drawn or ticked, so sprites in it must not run frame scripts either.
-    env.quiet = true;
-    try {
-      character.records.forEach(function (r) { if (r.hitTest) self.hitList.set(r.depth, self.child(r, null)); });
-    } finally {
-      env.quiet = wasQuiet;
-    }
+    // Hit-area children are never drawn or ticked, so sprites in it must not run frame scripts either: the
+    // scripts queued while they are created are dropped.
+    var self = this, scripts = this.env.scripts, mark = scripts.mark();
+    character.records.forEach(function (r) { if (r.hitTest) self.hitList.set(r.depth, self.child(r, null)); });
+    scripts.dropSince(mark);
     this.setState('up');
   }
   ButtonInstance.prototype.child = function (record, existing) {
@@ -61,12 +58,12 @@
   };
   // Queues the actions whose conditions match: a transition bit, or a key code (bits 9-15).
   ButtonInstance.prototype.runActions = function (condition, keyCode) {
-    var env = this.env, clip = this.parentClip, matched = false;
+    var scripts = this.env.scripts, clip = this.parentClip, matched = false;
     this.character.actions.forEach(function (a) {
       var match = keyCode ? ((a.conditions >> 9) & 0x7f) === keyCode : (a.conditions & condition) !== 0;
       if (!match) return;
       matched = true;
-      if (env.actions && env.queue) env.queue.push({ clip: clip, tags: [a] });
+      scripts.enqueue(clip, [a]);
     });
     return matched;
   };

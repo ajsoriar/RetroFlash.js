@@ -15,10 +15,9 @@
 
   var M = global.RetroFlashModules;
   if (!M || !M.CanvasRenderer) throw new Error('RetroFlash: load the scripts listed in src/modules.json, in order, before retroflash.js');
-  var VERSION = M.VERSION, DEFAULT_MAX_BITMAP_PIXELS = M.DEFAULT_MAX_BITMAP_PIXELS,
-    DEFAULT_MAX_TOTAL_BITMAP_PIXELS = M.DEFAULT_MAX_TOTAL_BITMAP_PIXELS, playerError = M.playerError, Movie = M.Movie,
-    Clip = M.Clip, createEnv = M.createEnv, runActionQueue = M.runActionQueue, InputController = M.InputController,
-    swfKeyCode = M.swfKeyCode, CanvasRenderer = M.CanvasRenderer;
+  var VERSION = M.VERSION, DEFAULT_LIMITS = M.DEFAULT_LIMITS, playerError = M.playerError,
+    resolveLimits = M.resolveLimits, Movie = M.Movie, Clip = M.Clip, createEnv = M.createEnv,
+    InputController = M.InputController, swfKeyCode = M.swfKeyCode, CanvasRenderer = M.CanvasRenderer;
   delete global.RetroFlashModules;
 
   var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1 };
@@ -31,13 +30,14 @@
       autoplay: !!options.autoplay,
       loop: options.loop !== false,
       maxFileBytes: options.maxFileBytes,
-      maxBitmapPixels: options.maxBitmapPixels || DEFAULT_MAX_BITMAP_PIXELS,
-      maxTotalBitmapPixels: options.maxTotalBitmapPixels || DEFAULT_MAX_TOTAL_BITMAP_PIXELS,
       actions: options.actions !== false,
       input: options.input !== false,
       pixelRatio: options.pixelRatio || global.devicePixelRatio || 1,
       maxCatchUpFrames: options.maxCatchUpFrames || 4
     };
+    // Budgets against hostile files: maxNesting, maxInstances, maxBitmapPixels, maxTotalBitmapPixels,
+    // maxActionBlocks and maxActionSteps (RetroFlash.defaultLimits).
+    this.limits = resolveLimits(options);
     this.state = 'idle';
     this.listeners = {};
     this.movie = null;
@@ -93,8 +93,9 @@
   };
   // Runs the actions queued by a button event, re-checks the hovered button, redraws.
   Player.prototype.afterInput = function () {
-    runActionQueue(this.env);
-    if (this.input.afterTick()) runActionQueue(this.env);
+    this.env.scripts.beginUpdate();
+    this.env.scripts.run();
+    if (this.input.afterTick()) this.env.scripts.run();
     this.render();
     this.canvas.style.cursor = this.input.cursor();
     this.emit('frame', this.root.frame);
@@ -157,7 +158,7 @@
     if (superseded()) return null;
     try {
       movie = new Movie(swf);
-      await movie.decodeBitmaps(this.options.maxBitmapPixels, this.options.maxTotalBitmapPixels, report);
+      await movie.decodeBitmaps(this.limits.maxBitmapPixels, this.limits.maxTotalBitmapPixels, report);
       if (superseded()) { movie.release(); return null; }
       this.movie = movie;
       this.fps = swf.fps > 0 ? swf.fps : 12;
@@ -188,15 +189,15 @@
   };
   // Fresh root timeline at frame 1, with its frame scripts run (as when the movie starts).
   Player.prototype.restart = function () {
-    this.env = createEnv(this.movie, this.report, { actions: this.options.actions });
+    this.env = createEnv(this.movie, this.report, { actions: this.options.actions, limits: this.limits });
     this.root = new Clip(this.env, this.movie.root, 0, null);
     this.root.loop = this.options.loop;
     this.root.gotoFrame(1);
-    runActionQueue(this.env);
+    this.env.scripts.run();
     var self = this, previous = this.input;
     this.input = new InputController(this.env, function () { return self.root; });
     if (previous && previous.inside) { this.input.inside = true; this.input.x = previous.x; this.input.y = previous.y; }
-    if (this.input.afterTick()) runActionQueue(this.env);
+    if (this.input.afterTick()) this.env.scripts.run();
     if (this.movie.buttonSounds.length) this.recordUnsupported('sound:DefineButtonSound', 'Button sounds are not played (no audio yet).', this.movie.buttonSounds.join(','));
   };
   Player.prototype.render = function () {
@@ -246,19 +247,21 @@
     if (!this.root) throw playerError('NOT_LOADED', 'No movie loaded');
     var n = typeof frame === 'string' ? this.movie.root.labels[frame] : frame;
     if (!Number.isFinite(n)) throw playerError('INVALID_FRAME', 'Unknown frame ' + JSON.stringify(frame));
+    var scripts = this.env.scripts, mark = scripts.mark();
     this.env.instances = 0;
-    this.env.quiet = true;
-    try { this.root.gotoFrame(n); } finally { this.env.quiet = false; }
+    this.root.gotoFrame(n);
+    scripts.dropSince(mark);
     if (this.input) this.input.pruneRemoved();
     this.render();
     this.emit('frame', this.root.frame);
   };
   Player.prototype.advance = function () {
     this.env.instances = 0;
+    this.env.scripts.beginUpdate();
     var ended = this.root.tick();
-    runActionQueue(this.env);
+    this.env.scripts.run();
     if (this.input && this.input.afterTick()) {
-      runActionQueue(this.env);
+      this.env.scripts.run();
       this.canvas.style.cursor = this.input.cursor();
     }
     if (ended) {
@@ -314,6 +317,7 @@
   global.RetroFlash = Object.freeze({
     version: VERSION,
     Player: Player,
+    defaultLimits: DEFAULT_LIMITS,
     // Building blocks of every module, exposed for tests and tooling; not a stable API.
     internals: Object.freeze(Object.assign({}, M))
   });

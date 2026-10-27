@@ -1,5 +1,5 @@
-/* RetroFlash.js - shared base for the player modules: the internal module namespace, the version, default
-   budgets and player errors. Load order: src/modules.json. */
+/* RetroFlash.js - shared base for the player modules: the internal module namespace, the version, limits and
+   player errors. Load order: src/modules.json. */
 (function (global) {
   'use strict';
 
@@ -8,14 +8,15 @@
 
   var VERSION = '0.4.0';
 
-  // Default budgets against hostile files.
-  var MAX_NESTING = 32;           // nested sprite/button instances
-  var MAX_INSTANCES = 100000;     // sprite/button instances created in one step (tick, seek, input event); hostile-file budget
-  var DEFAULT_MAX_BITMAP_PIXELS = 4096 * 4096;
-  var DEFAULT_MAX_TOTAL_BITMAP_PIXELS = 4 * DEFAULT_MAX_BITMAP_PIXELS; // about 256 MB of RGBA for all bitmaps of a movie
-  // AVM1 budgets per tick: action blocks run and actions executed.
-  var MAX_ACTION_BLOCKS = 10000;
-  var MAX_ACTION_STEPS = 100000;
+  // Default budgets against hostile files. Each one can be set by the Player option of the same name.
+  var DEFAULT_LIMITS = Object.freeze({
+    maxNesting: 32,                         // nested sprite/button instances
+    maxInstances: 100000,                   // sprite/button instances created in one step (tick, seek, input event)
+    maxBitmapPixels: 4096 * 4096,           // pixels of one bitmap
+    maxTotalBitmapPixels: 4 * 4096 * 4096,  // pixels of all bitmaps of a movie together (about 256 MB of RGBA)
+    maxActionBlocks: 10000,                 // AVM1 action blocks run per tick or input event
+    maxActionSteps: 100000                  // AVM1 actions executed per tick or input event
+  });
 
   function playerError(code, message) {
     var err = new Error('RetroFlash: ' + message);
@@ -24,8 +25,17 @@
     return err;
   }
 
-  Object.assign(M, { VERSION: VERSION, MAX_NESTING: MAX_NESTING, MAX_INSTANCES: MAX_INSTANCES,
-    DEFAULT_MAX_BITMAP_PIXELS: DEFAULT_MAX_BITMAP_PIXELS,
-    DEFAULT_MAX_TOTAL_BITMAP_PIXELS: DEFAULT_MAX_TOTAL_BITMAP_PIXELS, MAX_ACTION_BLOCKS: MAX_ACTION_BLOCKS,
-    MAX_ACTION_STEPS: MAX_ACTION_STEPS, playerError: playerError });
+  // The limits named in `options`, each a positive integer; missing ones (undefined or null) take the default.
+  function resolveLimits(options) {
+    var limits = {};
+    Object.keys(DEFAULT_LIMITS).forEach(function (key) {
+      var value = options ? options[key] : undefined;
+      if (value === undefined || value === null) value = DEFAULT_LIMITS[key];
+      else if (!Number.isInteger(value) || value < 1) throw playerError('INVALID_OPTION', 'options.' + key + ' must be a positive integer');
+      limits[key] = value;
+    });
+    return Object.freeze(limits);
+  }
+
+  Object.assign(M, { VERSION: VERSION, DEFAULT_LIMITS: DEFAULT_LIMITS, playerError: playerError, resolveLimits: resolveLimits });
 })(typeof window !== 'undefined' ? window : globalThis);

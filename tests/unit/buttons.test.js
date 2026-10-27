@@ -19,14 +19,16 @@ async function setup() {
   const env = I.createEnv(movie, (feature) => reported.push(feature));
   const root = new I.Clip(env, movie.root, 0, null);
   root.gotoFrame(1);
-  I.runActionQueue(env);
+  env.scripts.run();
   const input = new I.InputController(env, () => root);
-  const run = (changed) => { if (changed) I.runActionQueue(env); return changed; };
+  // Like Player.afterInput and Player.advance: one budget per input event or tick.
+  const run = (changed) => { if (changed) { env.scripts.beginUpdate(); env.scripts.run(); } return changed; };
   return {
     movie, root, env, input, reported,
     button: () => root.displayList.get(2), reset: () => root.displayList.get(3), lamp: () => root.displayList.get(1).clip,
     move: (p) => run(input.move(p[0], p[1])), down: () => run(input.down()), up: () => run(input.up()),
-    key: (k) => run(input.key(I.swfKeyCode(k))), tick: () => { root.tick(); I.runActionQueue(env); run(input.afterTick()); }
+    key: (k) => run(input.key(I.swfKeyCode(k))),
+    tick: () => { env.scripts.beginUpdate(); root.tick(); env.scripts.run(); if (input.afterTick()) env.scripts.run(); }
   };
 }
 const shownCharacter = (obj) => obj.button.displayList.get(1).characterId;
@@ -124,7 +126,7 @@ test('ticks: a button that leaves the stage is forgotten; one that appears under
   // Rebuild the root (as player.stop() does): the old instance is gone.
   const fresh = new I.Clip(env, root.def, 0, null);
   fresh.gotoFrame(1);
-  I.runActionQueue(env);
+  env.scripts.run();
   const input2 = new I.InputController(env, () => fresh);
   input2.inside = true; input2.x = AT_BUTTON[0]; input2.y = AT_BUTTON[1];
   assert.strictEqual(input2.afterTick(), true, 'new button under the pointer gets a roll over');

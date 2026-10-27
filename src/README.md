@@ -124,35 +124,13 @@ From the project root, run `node tests/run.js` (Node 16+, no dependencies). See 
 
 Load `../dist/retroflash.min.js` (built by `npm run build`), which holds the reader and the player. Alternatively, load the source scripts in the order of [`modules.json`](./modules.json), as the demo [`../demo/player.html`](../demo/player.html) does.
 
-### Source layout
-
-Each player module is a classic script. It takes what it needs from the internal namespace `RetroFlashModules`, which `core/base.js` creates, and adds its own exports there. `retroflash.js` comes last: it builds the public `RetroFlash` object and removes the namespace from the global object. Every export is also available as `RetroFlash.internals`, for tests and tooling; that is not a stable API.
-
-| Script | Contents |
-|---|---|
-| `swf-reader.js` | The reader (`SWFReader`) |
-| `core/base.js` | The module namespace, the version, default budgets, and player errors |
-| `core/math.js` | Matrices and colour transforms |
-| `render/geometry.js` | Shape records to fill and stroke commands, shared by the renderer and hit testing |
-| `display/bitmaps.js` | Bitmap decoding and pixel budgets |
-| `text/fonts.js`, `text/html.js`, `text/layout.js` | Fonts and static text, the HTML subset, and text field layout |
-| `display/movie.js` | The character dictionary and frame lists |
-| `display/clip.js`, `display/button.js` | Timelines and display lists, and button instances |
-| `avm1/decoder.js`, `avm1/interpreter.js` | AVM1 action records, and the timeline-control subset |
-| `input/hit-test.js`, `input/input.js` | Hit testing, and pointer and keyboard input |
-| `render/canvas-renderer.js` | The Canvas 2D renderer |
-| `retroflash.js` | `RetroFlash.Player`, the public API |
-
-A module uses only modules listed before it in `modules.json`. The one exception is `display/clip.js`, which reads `ButtonInstance` from the namespace when it creates a button, because buttons are built on clips.
-
 ```js
 const player = new RetroFlash.Player({
   canvas, autoplay: false, loop: true,
   maxFileBytes: 50 * 1024 * 1024,   // passed to SWFReader.load
-  maxBitmapPixels: 4096 * 4096,     // per bitmap
-  maxTotalBitmapPixels: 4 * 4096 * 4096, // all bitmaps of a movie together
   actions: true,                    // run the AVM1 timeline-control subset
-  input: true                       // pointer and keyboard on the canvas drive the movie's buttons
+  input: true,                      // pointer and keyboard on the canvas drive the movie's buttons
+  maxActionSteps: 100000            // any of the limits below
 });
 await player.load(fileOrBuffer);     // same inputs as SWFReader.load; decodes bitmaps; resolves with getInfo(),
                                      // or null when a later load() or destroy() superseded it
@@ -162,7 +140,49 @@ player.getInfo();         // { state, version, width, height, fps, frameCount, c
 player.getDiagnostics();  // { diagnostics (reader), unsupported (reader + player) }
 player.on('load' | 'frame' | 'warning' | 'error' | 'end', fn); player.off(type, fn);
 player.destroy();
+player.limits;            // the limits in force, frozen
 ```
+
+### Limits
+
+Budgets against hostile or runaway files. Each limit is a Player option with the same name. Its value must be a positive integer, or the player throws a `RetroFlashError` with code `INVALID_OPTION`; `undefined` or `null` keeps the default. `RetroFlash.defaultLimits` holds the defaults.
+
+| Option | Default | Bounds | Reported as |
+|---|---|---|---|
+| `maxNesting` | 32 | Levels of nested sprite and button instances | `render:nestingLimit` |
+| `maxInstances` | 100,000 | Sprite and button instances created in one step: a tick, a seek, or an input event | `render:instanceLimit` |
+| `maxBitmapPixels` | 4096 × 4096 | Pixels of one bitmap | `render:bitmapDecodeFailed` (`BITMAP_TOO_LARGE`) |
+| `maxTotalBitmapPixels` | 4 × 4096 × 4096 | Pixels of all bitmaps of a movie together | `render:bitmapDecodeFailed` (`BITMAP_BUDGET`) |
+| `maxActionBlocks` | 10,000 | AVM1 action blocks (each `DoAction` or button action list) run in one tick or input event; the rest are dropped | `avm1:budget` |
+| `maxActionSteps` | 100,000 | AVM1 actions executed in one tick or input event; the current block stops | `avm1:budget` |
+
+### Source layout
+
+Each player module is a classic script. It takes what it needs from the internal namespace `RetroFlashModules`, which `core/base.js` creates, and adds its own exports there. `retroflash.js` comes last: it builds the public `RetroFlash` object and removes the namespace from the global object. Every export is also available as `RetroFlash.internals`, for tests and tooling; that is not a stable API.
+
+| Script | Contents |
+|---|---|
+| `swf-reader.js` | The reader (`SWFReader`) |
+| `core/base.js` | The module namespace, the version, limits, and player errors |
+| `core/math.js` | Matrices and colour transforms |
+| `render/geometry.js` | Shape records to fill and stroke commands, shared by the renderer and hit testing |
+| `display/bitmaps.js` | Bitmap decoding and pixel budgets |
+| `text/fonts.js`, `text/html.js`, `text/layout.js` | Fonts and static text, the HTML subset, and text field layout |
+| `avm1/decoder.js`, `avm1/interpreter.js` | AVM1 decoding (`ActionCode`), and `ActionScheduler` with one `Activation` per block, which runs the timeline-control subset |
+| `display/movie.js` | The character dictionary and frame lists |
+| `display/clip.js`, `display/button.js` | The display context (`createEnv`), timelines and display lists, and button instances |
+| `input/hit-test.js`, `input/input.js` | Hit testing, and pointer and keyboard input |
+| `render/canvas-renderer.js` | The Canvas 2D renderer |
+| `retroflash.js` | `RetroFlash.Player`, the public API |
+
+A module uses only modules listed before it in `modules.json`. The one exception is `display/clip.js`, which reads `ButtonInstance` from the namespace when it creates a button, because buttons are built on clips.
+
+The state of one movie is split in two:
+
+- The **display context** (`createEnv`) is shared by every timeline. It holds the dictionary, the report function, the limits, and the per-step instance count.
+- The **`ActionScheduler`** (`env.scripts`) queues and runs AVM1 action blocks. It holds the queue, the parsed-action cache, and the budgets. The player opens a new budget for each tick and input event (`scripts.beginUpdate()`), and every `run()` in that update shares it. It drives timelines only through `Clip` methods, so AVM1 does not depend on the display list's internals.
+
+A scrubbing `seek` and the creation of a button's hit area enter frames without running their scripts: the scripts they queue are dropped, with `scripts.mark()` and `scripts.dropSince(mark)`.
 
 ### Behaviour
 
@@ -263,13 +283,45 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
 - Actions with no timeline effect (`Push`, `SetVariable`, and so on) are skipped.
 - Control flow and calls (`Jump`, `If`, `Call`, `CallFunction`, `CallMethod`, `GotoFrame2`, `SetTarget2`, `With`, `Try`, `Throw`, `Return`, `WaitForFrame2`) **end the script**, because their outcome is unknown without the full VM. AS2 code such as `_root.gotoAndPlay(3)` or `if (…) stop();` is therefore not followed yet.
 
-**Limits:** 10,000 scripts and 100,000 actions per frame.
+**Malformed actions:**
+
+- A record that runs past its block is reported as `avm1:malformedAction`, and the script stops there.
+- An executed action whose operands are malformed ends the script with the same report. This applies to `GotoFrame`, `GotoLabel`, `SetTarget`, and function definitions whose body runs past the block.
+- Other actions keep the behaviour listed above, even when their operands are malformed.
+
+**Limits:** by default, 10,000 action blocks and 100,000 actions per tick or input event (`maxActionBlocks`, `maxActionSteps`; see [Limits](#limits)).
+
+#### Decoder
+
+`ActionCode` (`avm1/decoder.js`) decodes an action block without running it. It is written against the "Actions" chapter of SWF19.
+
+- **Decoding on demand:** `at(offset)` decodes the record at any offset and caches it. A branch into the middle of a record, as some tools emit, therefore decodes from that point.
+- **Linear list:** `list()` decodes from offset 0 up to `ActionEndFlag`. It also gives `endFound`, `endOffset`, `trailingBytes`, and `truncated`.
+- **Records:** each one is `{ code, name, since, offset, end, data, args, error }`:
+  - `since` is the SWF version that introduced the action;
+  - `end` is the offset of the next record;
+  - `args` holds the operands:
+    - `Push` values, typed as `string`, `number`, `null`, `undefined`, `register`, `boolean`, or `constant`;
+    - the constant pool, registers, frames, labels, paths, URLs, and the flags of `GetURL2`, `GotoFrame2`, `DefineFunction2`, and `Try`;
+    - function, `With`, and `Try` bodies as offset ranges;
+    - branch `offset` and absolute `target`.
+- **Errors:** a record that cannot be used carries an `error`:
+  - `TRUNCATED_RECORD`: the header or the declared length runs past the block;
+  - `INVALID_OPERANDS`: the payload does not hold the operands;
+  - `INVALID_BRANCH`: a target outside the block;
+  - `INVALID_RANGE`: a body that runs past the block.
+- **Encoding details:**
+  - Strings are Latin-1 before SWF 6 and UTF-8 from SWF 6.
+  - A double is stored as two little-endian 32-bit words, the high word first. Push integers are signed.
+  - Bytes after the operands are ignored, and unknown codes are skipped by their length, as in Flash Player.
+
+Each block runs in its own `Activation`: the program counter, the clip the block belongs to, and the `SetTarget` target. The full VM will add the stack, registers, and scope chain there.
 
 **Instance safety:** the player resists files whose sprites or buttons contain themselves.
 
 - A sprite or button that would contain itself is not instantiated (`render:recursiveCharacter`).
-- Nesting deeper than 32 levels, through sprites or buttons, is refused (`render:nestingLimit`).
-- At most 100,000 sprite and button instances are created per step: a tick, a seek, or an input event (`render:instanceLimit`).
+- Nesting deeper than `maxNesting` levels (32 by default), through sprites or buttons, is refused (`render:nestingLimit`).
+- At most `maxInstances` sprite and button instances (100,000 by default) are created per step: a tick, a seek, or an input event (`render:instanceLimit`).
 
 **Not run:** `DoInitAction` and clip event actions.
 

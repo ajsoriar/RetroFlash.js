@@ -31,7 +31,7 @@ test('demo/player.html loads the scripts of the manifest, in order', () => {
 test('the player modules leave no namespace behind and expose their exports as internals', () => {
   const { RetroFlash } = require('../support/load-reader');
   assert.ok(!('RetroFlashModules' in globalThis));
-  ['Clip', 'Movie', 'CanvasRenderer', 'parseActions', 'layoutEditText'].forEach((name) => {
+  ['Clip', 'Movie', 'CanvasRenderer', 'ActionCode', 'layoutEditText'].forEach((name) => {
     assert.strictEqual(typeof RetroFlash.internals[name], 'function', name);
   });
 });

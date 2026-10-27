@@ -7,13 +7,13 @@ const { test, assert } = require('../support/harness');
 const { SWFReader, RetroFlash } = require('../support/load-reader');
 const { FIXTURE_DIR } = require('../fixtures/build-fixtures');
 
-const { buildShapeGeometry, Movie, Clip } = RetroFlash.internals;
+const { buildShapeGeometry, Movie, Clip, createEnv } = RetroFlash.internals;
 const loadAnimation = () => SWFReader.load(new Uint8Array(fs.readFileSync(path.join(FIXTURE_DIR, 'valid/fws-animation.swf'))));
 
 async function setup() {
   const movie = new Movie(await loadAnimation());
   const reported = [];
-  const root = new Clip({ characters: movie.characters, report: (feature, reason, source) => reported.push([feature, source]) }, movie.root, 0);
+  const root = new Clip(createEnv(movie, (feature, reason, source) => reported.push([feature, source])), movie.root, 0);
   root.gotoFrame(1);
   return { movie, root, reported };
 }

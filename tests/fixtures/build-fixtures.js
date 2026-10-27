@@ -7,6 +7,9 @@ const path = require('path');
 const zlib = require('zlib');
 const { body, tag, T, swf, matrix, cxform, rect, movieBody, STAGE_550x400 } = require('../support/swf-builder');
 const { buildAnimation } = require('./animation');
+const { buildBitmaps } = require('./bitmaps');
+const { buildActions } = require('./actions');
+const { buildButtons } = require('./buttons');
 
 const fileAttributes = (raw = 0) => tag(T.FileAttributes, body((w) => w.u32(raw)));
 const background = (r, g, b) => tag(T.SetBackgroundColor, body((w) => w.rgb({ r, g, b })));
@@ -71,7 +74,7 @@ const unsupportedTags = () => [
   tag(1000, Uint8Array.from([1, 2, 3])),
   tag(T.DoABC, body((w) => w.u32(1).string('fake').raw([0x10, 0x00, 0x2e, 0x00]))),
   tag(T.PlaceObject2, body((w) => w.u8(PO.character | PO.clipActions).u16(1).u16(2).u16(0).u32(0).u32(0))),
-  tag(T.PlaceObject3, body((w) => w.u8(PO.character).u8(PO3.filterList | PO3.blendMode).u16(2).u16(2).raw([1, 0, 0, 0]).u8(3))),
+  tag(T.PlaceObject3, body((w) => w.u8(PO.character).u8(PO3.filterList | PO3.blendMode).u16(2).u16(2).raw([1, 1, 0, 0, 4, 0, 0, 0, 4, 0, 1]).u8(3))),
   showFrame(),
   end()
 ];
@@ -121,12 +124,12 @@ const fixtures = [
   },
   {
     file: 'valid/fws-unsupported.swf',
-    description: 'Content the reader must report rather than decode: unknown tag code 1000, DoABC, PlaceObject2 clip actions, ' +
-      'PlaceObject3 filter list (and the blend mode after it).',
+    description: 'Content the reader must report rather than decode: unknown tag code 1000, DoABC, PlaceObject2 clip actions. ' +
+      'Also a PlaceObject3 whose blur filter list is skipped by size so its blend mode is still decoded.',
     build: () => swf({ tags: unsupportedTags() }),
     expect: {
       signature: 'FWS', version: 10, width: 550, height: 400, fps: 24, frameCount: 1, actualFrameCount: 1, tags: 7, diagnostics: [],
-      unsupported: ['PlaceObject2.clipActions', 'PlaceObject3.blendMode', 'PlaceObject3.filterList', 'actionscript:DoABC', 'tag:Unknown_1000']
+      unsupported: ['PlaceObject2.clipActions', 'actionscript:DoABC', 'tag:Unknown_1000']
     }
   },
   {
@@ -148,6 +151,38 @@ const fixtures = [
     expect: {
       signature: 'FWS', version: 8, width: 480, height: 320, fps: 24, frameCount: 48, actualFrameCount: 48, tags: 164,
       diagnostics: [], unsupported: []
+    }
+  },
+  {
+    file: 'valid/fws-bitmaps.swf',
+    description: 'Bitmap fixture (tests/fixtures/bitmaps.js): DefineBitsJPEG2 (JPEG and PNG), DefineBitsJPEG3 with alpha, ' +
+      'DefineBits + JPEGTables, DefineBitsLossless formats 3/4/5, DefineBitsLossless2 formats 3/5, drawn through clipped, ' +
+      'non-smoothed and repeating bitmap fills, one rotated at half alpha.',
+    build: buildBitmaps,
+    expect: {
+      signature: 'FWS', version: 8, width: 480, height: 320, fps: 12, frameCount: 1, actualFrameCount: 1, tags: 35,
+      diagnostics: [], unsupported: []
+    }
+  },
+  {
+    file: 'valid/fws-actions.swf',
+    description: 'AVM1 timeline-control fixture (tests/fixtures/actions.js): stop/play/gotoLabel/gotoFrame/setTarget in root ' +
+      'and sprite frames, plus unsupported actions (Push, SetVariable, Jump) and a GetURL that must never navigate.',
+    build: buildActions,
+    expect: {
+      signature: 'FWS', version: 6, width: 200, height: 200, fps: 12, frameCount: 6, actualFrameCount: 6, tags: 19,
+      diagnostics: [], unsupported: ['actionscript:DoAction']
+    }
+  },
+  {
+    file: 'valid/fws-buttons.swf',
+    description: 'Button fixture (tests/fixtures/buttons.js): DefineButton2 with up/over/down states, a larger hit area, ' +
+      'roll over/roll out/release actions and an Enter key press; DefineButton (v1) tinted by DefineButtonCxform; ' +
+      'a "lamp" sprite driven through setTarget.',
+    build: buildButtons,
+    expect: {
+      signature: 'FWS', version: 6, width: 320, height: 200, fps: 12, frameCount: 2, actualFrameCount: 2, tags: 23,
+      diagnostics: [], unsupported: ['actionscript:DoAction']
     }
   },
   // ---- loads with diagnostics --------------------------------------------------------------------------

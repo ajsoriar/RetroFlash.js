@@ -14,7 +14,7 @@ SWFReader.load(new Uint8Array(fs.readFileSync(file))).then((movie) => {
   console.log(`${movie.signature} SWF ${movie.version} · ${movie.compression} · ${movie.declaredLength} bytes declared, ${movie.sourceLength} on disk`);
   console.log(`stage ${movie.width} × ${movie.height} px · ${movie.fps} fps · frames ${movie.actualFrameCount}/${movie.frameCount}`);
   console.log(`tags ${movie.tags.length} top-level, ${movie.totalTagCount} total · sprites ${movie.spriteCount} · ` +
-    `AVM1 ${movie.codeTags.avm1} · AVM2 ${movie.codeTags.avm2} · clip actions ${movie.codeTags.clipActions}`);
+    `AVM1 ${movie.codeTags.avm1} · AVM2 ${movie.codeTags.avm2} · clip actions ${movie.codeTags.clipActions} · button actions ${movie.codeTags.buttonActions}`);
   const status = {};
   movie.walkTags((t) => { status[t.status] = (status[t.status] || 0) + 1; });
   console.log('tag status:', status);

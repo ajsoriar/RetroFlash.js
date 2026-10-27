@@ -13,7 +13,7 @@ test('public API: frozen SWFReader with load, BitReader, version and tag names',
   assert.ok(Object.isFrozen(SWFReader));
   assert.strictEqual(typeof SWFReader.load, 'function');
   assert.strictEqual(typeof SWFReader.BitReader, 'function');
-  assert.strictEqual(SWFReader.version, '0.3.0');
+  assert.strictEqual(SWFReader.version, '0.4.0');
   assert.strictEqual(SWFReader.tagNames[39], 'DefineSprite');
   assert.deepStrictEqual({ ...SWFReader.defaultOptions }, { maxFileBytes: 52428800, maxTags: 500000, maxSpriteDepth: 4, strict: false });
 });
@@ -36,7 +36,7 @@ test('phase-1 compatible fields are preserved', async () => {
   assert.deepStrictEqual(movie.bounds, { xminTwips: 0, xmaxTwips: 11000, yminTwips: 0, ymaxTwips: 8000, nBits: 15, width: 550, height: 400, nextOffset: 17 });
   assert.strictEqual(movie.fileAttributes.actionScript3, false);
   assert.strictEqual(movie.fileAttributes.useNetwork, false);
-  assert.deepStrictEqual(movie.codeTags, { avm1: 0, avm2: 0, clipActions: 0 });
+  assert.deepStrictEqual(movie.codeTags, { avm1: 0, avm2: 0, clipActions: 0, buttonActions: 0 });
   assert.deepStrictEqual(movie.warnings, []);
   assert.deepStrictEqual(movie.frames, [{ number: 1, endTagIndex: 2, labels: [] }]);
   const first = movie.tags[0];
@@ -101,7 +101,7 @@ test('timeline fixture: frames, labels, long header and every decoded placement'
     blendMode: 3, bitmapCache: 1
   });
   assert.deepStrictEqual(t[13].fields, { depth: 2 });
-  assert.deepStrictEqual(movie.codeTags, { avm1: 1, avm2: 0, clipActions: 0 });
+  assert.deepStrictEqual(movie.codeTags, { avm1: 1, avm2: 0, clipActions: 0, buttonActions: 0 });
   assert.deepStrictEqual(Array.from(movie.getTagData(7)), [0x07, 0x00], 'DoAction bytes are available, never executed');
 });
 
@@ -159,8 +159,9 @@ test('unsupported content is listed with counts, reasons and first location', as
   assert.strictEqual(movie.tags[3].status, 'partial');
   assert.deepStrictEqual(movie.tags[3].unparsed, ['clipActions']);
   assert.deepStrictEqual(movie.tags[3].fields, { move: false, depth: 1, characterId: 2, hasClipActions: true });
-  assert.deepStrictEqual(movie.tags[4].unparsed, ['filterList', 'blendMode']);
-  assert.deepStrictEqual(movie.codeTags, { avm1: 0, avm2: 1, clipActions: 1 });
+  assert.strictEqual(movie.tags[4].status, 'decoded');
+  assert.deepStrictEqual(movie.tags[4].fields, { move: false, depth: 2, characterId: 2, filters: ['blur'], blendMode: 3 });
+  assert.deepStrictEqual(movie.codeTags, { avm1: 0, avm2: 1, clipActions: 1, buttonActions: 0 });
 });
 
 test('invalid tag bodies become diagnostics; strict mode rejects them', async () => {

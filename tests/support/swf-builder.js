@@ -104,7 +104,11 @@ function fillStyle(w, f, version) {
   else if (f.linear) { w.u8(0x10); matrix(w, f.linear.matrix); gradientRecord(w, f.linear, version, false); }
   else if (f.radial) { w.u8(0x12); matrix(w, f.radial.matrix); gradientRecord(w, f.radial, version, false); }
   else if (f.focal) { w.u8(0x13); matrix(w, f.focal.matrix); gradientRecord(w, f.focal, version, true); }
-  else if (f.bitmap) { w.u8(0x41).u16(f.bitmap.id); matrix(w, f.bitmap.matrix || {}); }
+  else if (f.bitmap) {
+    const { repeat = false, smooth = true } = f.bitmap;
+    w.u8(repeat ? (smooth ? 0x40 : 0x42) : (smooth ? 0x41 : 0x43)).u16(f.bitmap.id);
+    matrix(w, f.bitmap.matrix || {});
+  }
   else throw new Error('unknown fill');
 }
 
@@ -185,6 +189,139 @@ function tag(code, data = new Uint8Array(0), { long = false, length } = {}) {
   return Buffer.concat([w.bytes(), Buffer.from(data)]);
 }
 
+// ---- Bitmaps --------------------------------------------------------------------------------------------
+
+// Splits a baseline JPEG into JPEGTables (SOI + DQT/DHT + EOI) and the DefineBits image (SOI + other segments + scan).
+function splitJpeg(jpeg) {
+  const tables = [Buffer.from([0xff, 0xd8])], image = [Buffer.from([0xff, 0xd8])];
+  let i = 2;
+  while (i < jpeg.length) {
+    const marker = jpeg[i + 1];
+    if (marker === 0xda) { image.push(jpeg.subarray(i)); break; } // scan data runs to EOI
+    const end = i + 2 + jpeg.readUInt16BE(i + 2);
+    (marker === 0xdb || marker === 0xc4 ? tables : image).push(jpeg.subarray(i, end));
+    i = end;
+  }
+  tables.push(Buffer.from([0xff, 0xd9]));
+  return { tables: Buffer.concat(tables), image: Buffer.concat(image) };
+}
+
+// zlib with stored (uncompressed) blocks: identical output on every zlib version, so fixtures that embed
+// zlib data inside FWS files stay byte-for-byte reproducible.
+const storedZlib = (buf) => zlib.deflateSync(buf, { level: 0 });
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+// Minimal RGBA PNG (colour type 6, 8 bits, filter 0). rgba: flat array of width*height*4 bytes.
+function png(width, height, rgba) {
+  const chunk = (type, data) => {
+    const head = Buffer.alloc(4); head.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([head, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const rows = [];
+  for (let y = 0; y < height; y++) rows.push(Buffer.from([0]), Buffer.from(rgba.slice(y * width * 4, (y + 1) * width * 4)));
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr),
+    chunk('IDAT', storedZlib(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+}
+
+const premultiply = (r, g, b, a) => [Math.round((r * a) / 255), Math.round((g * a) / 255), Math.round((b * a) / 255)];
+
+/* DefineBitsLossless (version 1) / DefineBitsLossless2 (version 2).
+   spec = { format: 3, width, height, palette: [[r, g, b, a?]], indices: [..] }
+        | { format: 4, width, height, pixels: [[r5, g5, b5]] }          (version 1 only)
+        | { format: 5, width, height, pixels: [[r, g, b, a?]] }          (straight alpha; premultiplied when written) */
+function defineBitsLossless(id, version, spec) {
+  const { format, width, height } = spec, out = [];
+  if (format === 3) {
+    for (const [r, g, b, a = 255] of spec.palette) out.push(...(version === 2 ? [...premultiply(r, g, b, a), a] : [r, g, b]));
+    const stride = (width + 3) & ~3;
+    for (let y = 0; y < height; y++) for (let x = 0; x < stride; x++) out.push(x < width ? spec.indices[y * width + x] : 0);
+  } else if (format === 4) {
+    const stride = (width * 2 + 3) & ~3;
+    for (let y = 0; y < height; y++) {
+      const row = [];
+      for (let x = 0; x < width; x++) { const [r, g, b] = spec.pixels[y * width + x]; const v = (r << 10) | (g << 5) | b; row.push(v >> 8, v & 0xff); }
+      while (row.length < stride) row.push(0);
+      out.push(...row);
+    }
+  } else {
+    for (const [r, g, b, a = 255] of spec.pixels) out.push(...(version === 2 ? [a, ...premultiply(r, g, b, a)] : [0, r, g, b]));
+  }
+  return tag(version === 2 ? 36 : 20, body((w) => {
+    w.u16(id).u8(format).u16(width).u16(height);
+    if (format === 3) w.u8(spec.palette.length - 1);
+    w.raw(storedZlib(Buffer.from(out)));
+  }));
+}
+const defineBitsJPEG2 = (id, image) => tag(21, body((w) => w.u16(id).raw(image)));
+// alpha: width*height bytes, zlib-compressed into the tag. Colour data is expected premultiplied, as in Flash.
+const defineBitsJPEG3 = (id, image, alpha) => tag(35, body((w) => w.u16(id).u32(image.length).raw(image).raw(storedZlib(Buffer.from(alpha)))));
+const defineBits = (id, image) => tag(6, body((w) => w.u16(id).raw(image)));
+const jpegTables = (tables) => tag(8, Uint8Array.from(tables));
+
+// ---- AVM1 action records ------------------------------------------------------------------------------
+const A = {
+  stop: () => [0x07], play: () => [0x06], nextFrame: () => [0x04], prevFrame: () => [0x05],
+  gotoFrame: (index0) => [0x81, 2, 0, index0 & 0xff, index0 >> 8],
+  gotoLabel: (label) => withData(0x8c, [...Buffer.from(label, 'utf8'), 0]),
+  setTarget: (path) => withData(0x8b, [...Buffer.from(path, 'utf8'), 0]),
+  getURL: (url, target) => withData(0x83, [...Buffer.from(url, 'utf8'), 0, ...Buffer.from(target, 'utf8'), 0]),
+  pushString: (s) => withData(0x96, [0, ...Buffer.from(s, 'utf8'), 0]),
+  setVariable: () => [0x1d],
+  jump: (offset) => [0x99, 2, 0, offset & 0xff, (offset >> 8) & 0xff]
+};
+function withData(code, data) { return [code, data.length & 0xff, data.length >> 8, ...data]; }
+const doAction = (...records) => tag(12, Uint8Array.from([...records.flat(), 0x00]));
+
+// ---- Buttons ------------------------------------------------------------------------------------------
+// record: { states: { up, over, down, hit }, character, depth, matrix?, cx? (v2 CXFORMWITHALPHA {mult, add}) }
+function buttonRecords(w, records, version) {
+  for (const r of records) {
+    const s = r.states;
+    w.u8((s.up ? 1 : 0) | (s.over ? 2 : 0) | (s.down ? 4 : 0) | (s.hit ? 8 : 0)).u16(r.character).u16(r.depth);
+    matrix(w, r.matrix || {});
+    if (version === 2) cxform(w, r.cx || {}, true);
+  }
+  w.u8(0); // CharacterEndFlag
+}
+// actions: [{ conditions (UI16 bits), key?: SWF key code, records: [action records] }]
+function defineButton2(id, { records, actions = [], trackAsMenu = false }) {
+  return tag(34, body((w) => {
+    w.u16(id).u8(trackAsMenu ? 1 : 0);
+    const recordBytes = new BitWriter();
+    buttonRecords(recordBytes, records, 2);
+    const rec = recordBytes.bytes();
+    w.u16(actions.length ? 2 + rec.length : 0).raw(rec); // ActionOffset counts from its own position
+    actions.forEach((a, i) => {
+      const code = Uint8Array.from([...a.records.flat(), 0x00]);
+      const last = i === actions.length - 1;
+      w.u16(last ? 0 : 4 + code.length).u16(a.conditions | ((a.key || 0) << 9)).raw(code);
+    });
+  }));
+}
+function defineButton(id, records, actionRecords) {
+  return tag(7, body((w) => {
+    w.u16(id);
+    buttonRecords(w, records, 1);
+    w.raw([...actionRecords.flat(), 0x00]);
+  }));
+}
+// cxforms: [{ mult: [r, g, b], add: [r, g, b] }] applied to the button's records in order.
+const defineButtonCxform = (id, cxforms) => tag(23, body((w) => { w.u16(id); cxforms.forEach((c) => cxform(w, c, false)); }));
+
 const T = {
   End: 0, ShowFrame: 1, DefineShape: 2, PlaceObject: 4, RemoveObject: 5, SetBackgroundColor: 9, DoAction: 12,
   PlaceObject2: 26, RemoveObject2: 28, DefineSprite: 39, FrameLabel: 43, DoInitAction: 59,
@@ -210,4 +347,8 @@ function swf({ signature = 'FWS', version = 10, declaredLength, append, ...rest 
   return new Uint8Array(Buffer.concat([Buffer.from(prefix), payload, Buffer.from(append || [])]));
 }
 
-module.exports = { BitWriter, signedBits, rect, matrix, cxform, body, tag, defineShape, T, swf, movieBody, STAGE_550x400 };
+module.exports = {
+  BitWriter, signedBits, rect, matrix, cxform, body, tag, defineShape, T, swf, movieBody, STAGE_550x400,
+  splitJpeg, png, crc32, defineBitsLossless, defineBitsJPEG2, defineBitsJPEG3, defineBits, jpegTables, A, doAction,
+  defineButton2, defineButton, defineButtonCxform
+};

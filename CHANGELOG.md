@@ -1,5 +1,89 @@
 # Changelog
 
+## RetroFlash 0.3.0 + SWFReader 0.4.0 — 2026-10-27 (buttons)
+
+### Added
+
+- **Buttons** (`DefineButton`, `DefineButton2`).
+  - States: up/over/down children, persistent across state changes, with animated sprites inside.
+  - A hit area that is never drawn.
+  - Colour transforms from `DefineButtonCxform`.
+- **Input:**
+  - pointer events become roll over/out, press, release, drag out/in, and release outside, with their condition actions;
+  - `KeyPress` conditions from the keyboard;
+  - the hand cursor;
+  - button actions run in the parent timeline's context through the AVM1 subset;
+  - new option `input`.
+- **Hit testing:** points are tested against fills (even-odd/non-zero), curves, and strokes. `RetroFlash.internals.pointInShape` and `pickButton` are exposed.
+- **Reader 0.4.0:**
+  - decodes `DefineButton`, `DefineButton2`, `DefineButtonCxform`, and `DefineButtonSound`;
+  - validates and skips filter lists by size;
+  - adds `codeTags.buttonActions`.
+- Fixture `valid/fws-buttons.swf` and `tests/unit/buttons.test.js`.
+
+### Changed
+
+- `PlaceObject3` filter lists are now decoded (as filter names) instead of leaving the placement partial. Blend mode and the later fields are therefore read too.
+- `valid/fws-unsupported.swf` now carries a valid blur filter list.
+- `.gitattributes` marks `*.swf`, `*.jpg`, and `*.png` as binary.
+
+### Fixed (pre-commit review)
+
+- **Hostile files:** sprites and buttons that contain themselves, even several times per level (exponential growth), no longer overflow the stack or exhaust memory.
+  - Recursion is refused (`render:recursiveCharacter`).
+  - Nesting is bounded through buttons as well (`render:nestingLimit`).
+  - At most 100,000 instances are created per step (`render:instanceLimit`).
+  - A runtime error while building the movie now sets the state to `error` and emits `error`, instead of leaving the player in `loading`.
+- **Input:**
+  - Pressing outside every button and releasing over one now gives that button its roll over.
+  - Removed buttons are checked after frames, scripts, and seeks, no longer on every pointer move.
+- **Hit areas:** sprites inside a hit area no longer run frame scripts.
+- **`play()`** on a finished non-looping movie restarts it like `stop()`, so frame-1 scripts run again.
+- **Reader:**
+  - An unreadable `PlaceObject3` filter list keeps the placement, which becomes `partial` with `unparsed: ['filterList']`.
+  - `DefineButton2` finds its actions through `ActionOffset`; a gap after the records is skipped and reported as `BUTTON_ACTION_OFFSET_GAP`.
+  - `SWFReader.inflate(bytes, max, { truncate: true })` keeps the first `max` bytes. Bitmaps use it, so extra zlib output no longer drops the bitmap.
+- **Undecodable definitions** (shapes, bitmaps, buttons) still define their id, so placements report them as `(invalid)` instead of missing.
+- **Bitmap memory:**
+  - The size of a JPEG, PNG, or GIF is read from its header (JPEG `SOFn`, PNG `IHDR`, GIF logical screen) and checked against `maxBitmapPixels` **before** the browser decodes it. Images without a readable size are refused (`BITMAP_FORMAT`). A decoded image larger than its header declared is discarded.
+  - New option `maxTotalBitmapPixels` (default 4 × 4096 × 4096): one pixel budget for all bitmaps of a movie, taken in character id order. Bitmaps past it are reported (`BITMAP_BUDGET`) and not drawn.
+  - At most 4 bitmaps decode at a time.
+  - Decoded bitmaps are released (`ImageBitmap.close`) when a movie is replaced or the player is destroyed.
+- **Overlapping loads:** only the latest `load()` wins. A load superseded by another `load()` or by `destroy()` resolves to `null` and changes nothing, even if it fails (before, an older load finishing last replaced the newer movie, and a failed load after `destroy()` set the state back to `error`).
+- `tests/unit/robustness.test.js` covers these cases, and also pins that the body of `DefineFunction`/`DefineFunction2` follows the action record (its `Length` does not include it), so the next action runs.
+
+## RetroFlash 0.2.0 — 2026-10-27 (bitmaps + AVM1 timeline control)
+
+### Added
+
+- **Bitmaps:**
+  - `DefineBits` + `JPEGTables`, `DefineBitsJPEG2/3/4`, and `DefineBitsLossless/Lossless2` are decoded during `load`.
+  - JPEG, PNG, and GIF use the browser decoder. The JPEG3/4 alpha plane and lossless formats 3, 4, and 5 are decoded in JavaScript, with premultiplied data converted.
+  - Erroneous `FF D9 FF D8` JPEG headers are removed.
+  - Bitmap fills are drawn clipped or repeating, smoothed or not, and with the alpha multiplier of colour transforms. Bitmaps placed directly are drawn too.
+  - New option `maxBitmapPixels`.
+- **AVM1 timeline-control subset**, a controlled interpreter that never evaluates JavaScript or navigates:
+  - frame scripts run after each tick;
+  - executed: `Stop`, `Play`, `NextFrame`, `PreviousFrame`, `GotoFrame`, `GotoLabel`, `SetTarget` (slash and dot paths), and `WaitForFrame`;
+  - `GetURL` is ignored and reported;
+  - function bodies are skipped;
+  - control flow and calls end the script and are reported;
+  - per-frame budgets apply;
+  - new option `actions`, and `getInfo().rootPlaying`.
+- Fixtures `valid/fws-bitmaps.swf` and `valid/fws-actions.swf`, plus the asset `fixtures/assets/gradient-32.jpg`.
+- `tests/unit/bitmaps-avm1.test.js`.
+- Reader 0.3.0:
+  - bitmap header decoding;
+  - `SWFReader.inflate`;
+  - `BitReader.skipRemaining`.
+
+### Changed
+
+- `stop()` now rewinds the whole movie, so frame-1 scripts run again.
+- `seek()` does not run frame scripts.
+- Bitmap and JPEGTables tags now have status `decoded`.
+- The fixture writer embeds zlib data with stored blocks, so fixtures stay byte-identical across zlib versions.
+
 ## RetroFlash 0.1.0 + SWFReader 0.3.0 — 2026-10-27 (milestone 1: vector playback)
 
 ### Added

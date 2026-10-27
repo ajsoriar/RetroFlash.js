@@ -1,4 +1,4 @@
-/* SWFReader v0.3 - dependency-free SWF structure reader (browser classic script; also loadable from Node for tests).
+/* SWFReader v0.4 - dependency-free SWF structure reader (browser classic script; also loadable from Node for tests).
    API: const movie = await SWFReader.load(fileOrBuffer[, options]);
    SWFReader parses the header, the tag index (recursively inside DefineSprite) and a small set of tag bodies.
    It does NOT render and NEVER executes ActionScript. Anything it does not decode is reported in
@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
 
-  var VERSION = '0.3.0';
+  var VERSION = '0.4.0';
 
   var TAG_NAMES = {
     0:'End', 1:'ShowFrame', 2:'DefineShape', 4:'PlaceObject', 5:'RemoveObject',
@@ -44,12 +44,11 @@
 
   var REASON_INDEXED = 'Indexed only: offsets and raw bytes are available through getTagData(); the body is not decoded yet.';
   var REASON_UNKNOWN = 'Unknown tag code; skipped using its declared length.';
-  var REASON_AVM1 = 'AVM1 bytecode detected; it is never executed (no ActionScript VM in this phase).';
+  var REASON_AVM1 = 'AVM1 bytecode detected; the reader does not interpret it (RetroFlash.Player runs only a timeline-control subset).';
   var REASON_AVM2 = 'AVM2 (ActionScript 3) bytecode detected; it is never executed.';
   var UNPARSED_REASONS = {
     clipActions: 'AVM1 clip event actions; not parsed and never executed.',
-    filterList: 'Filter list not decoded yet; the optional fields after it are left unparsed too.',
-    afterFilterList: 'Not decoded because it follows an undecoded filter list.',
+    filterList: 'Filter list could not be read (unknown filter id or truncated); it and the optional fields after it are left unparsed.',
     controlTags: 'Sprite nesting deeper than options.maxSpriteDepth; contents not indexed.'
   };
 
@@ -97,6 +96,8 @@
   BitReader.prototype.remainingBits = function () { return this.end * 8 - this.bitPos; };
   BitReader.prototype.remainingBytes = function () { return this.end - this.byteOffset(); };
   BitReader.prototype.align = function () { this.bitPos = this.byteOffset() * 8; return this; };
+  // Marks the rest of the range as consumed (opaque payloads such as image data).
+  BitReader.prototype.skipRemaining = function () { this.bitPos = this.end * 8; return this; };
   BitReader.prototype.need = function (bits, what) {
     if (bits > this.remainingBits()) {
       fail('TRUNCATED_DATA', (what || 'Field') + ' needs ' + bits + ' bit(s) at byte ' + Math.floor(this.bitPos / 8) +
@@ -218,6 +219,90 @@
   }
   BitReader.prototype.readCxform = function () { return readColorTransform(this, false); };
   BitReader.prototype.readCxformWithAlpha = function () { return readColorTransform(this, true); };
+
+  /* FILTERLIST: NumberOfFilters UI8, then FILTER records. Filters are not rendered yet, so each one is
+     validated and skipped by its fixed size (SWF19 FILTER);
+     only the filter names are kept. */
+  var FILTER_NAMES = ['dropShadow', 'blur', 'glow', 'bevel', 'gradientGlow', 'convolution', 'colorMatrix', 'gradientBevel'];
+  function readFilterList(r, what) {
+    var count = r.readUI8(what + '.NumberOfFilters'), names = [];
+    for (var i = 0; i < count; i++) {
+      var at = r.byteOffset(), type = r.readUI8(what + '.FilterID'), size;
+      if (type === 0) size = 23;
+      else if (type === 1) size = 9;
+      else if (type === 2) size = 15;
+      else if (type === 3) size = 27;
+      else if (type === 4 || type === 7) size = 5 * r.readUI8(what + '.NumColors') + 19;
+      else if (type === 5) {
+        var mx = r.readUI8(what + '.MatrixX'), my = r.readUI8(what + '.MatrixY');
+        size = 13 + 4 * mx * my;
+      } else if (type === 6) size = 80;
+      else fail('INVALID_VALUE', 'Unknown filter id ' + type + ' at byte ' + at, at);
+      r.need(size * 8, what + '.' + FILTER_NAMES[type]);
+      r.bitPos += size * 8;
+      names.push(FILTER_NAMES[type]);
+    }
+    return names;
+  }
+
+  /* DefineButton (v1) and DefineButton2 (v2). BUTTONRECORD flags: UP 1, OVER 2, DOWN 4, HIT_TEST 8, then in
+     SWF 8+ HasFilterList 16 and HasBlendMode 32. Action data stays in the tag body: `actions` holds
+     { conditions, start, end } relative to getTagData(tag). DefineButton has one action list, run on
+     OverDown -> OverUp (release). Condition bits follow BUTTONCONDACTION read as a little-endian UI16
+     (bit 0 IdleToOverUp ... bit 8 OverDownToIdle, bits 9-15 key code). */
+  function buttonDecoder(version) {
+    var label = version === 2 ? 'DefineButton2' : 'DefineButton';
+    return function (r, ctx, tag) {
+      var start = r.start, f = { buttonId: r.readUI16(label + '.ButtonId'), buttonVersion: version, trackAsMenu: false, records: [], actions: [] };
+      var actionOffsetAt = 0, actionOffset = 0;
+      if (version === 2) {
+        f.trackAsMenu = (r.readUI8(label + '.Flags') & 0x01) === 1;
+        actionOffsetAt = r.byteOffset();
+        actionOffset = r.readUI16(label + '.ActionOffset');
+      }
+      for (;;) {
+        var flags = r.readUI8(label + '.BUTTONRECORD.Flags');
+        if (!flags) break;
+        var rec = {
+          up: !!(flags & 1), over: !!(flags & 2), down: !!(flags & 4), hitTest: !!(flags & 8),
+          characterId: r.readUI16('BUTTONRECORD.CharacterID'), depth: r.readUI16('BUTTONRECORD.PlaceDepth'), matrix: r.readMatrix()
+        };
+        if (version === 2) rec.colorTransform = r.readCxformWithAlpha();
+        if (version === 2 && (flags & 0x10)) rec.filters = readFilterList(r, 'BUTTONRECORD.FilterList');
+        if (version === 2 && (flags & 0x20)) rec.blendMode = r.readUI8('BUTTONRECORD.BlendMode');
+        f.records.push(rec);
+      }
+      if (version === 1) {
+        f.actions.push({ conditions: 0x0008, start: r.byteOffset() - start, end: r.end - start });
+        ctx.codeTags.buttonActions++;
+        r.skipRemaining();
+        return f;
+      }
+      if (actionOffset === 0) return f;
+      // ActionOffset locates the actions. Gaps after the records are tolerated (and reported); pointing
+      // back into the records or past the tag is not.
+      var actionsAt = actionOffsetAt + actionOffset;
+      if (actionsAt < r.byteOffset() || actionsAt > r.end) {
+        fail('INVALID_VALUE', 'DefineButton2.ActionOffset points to byte ' + actionsAt + ', outside ' + r.byteOffset() + '..' + r.end, actionOffsetAt);
+      }
+      if (actionsAt > r.byteOffset()) {
+        diagnose(ctx, 'warning', 'BUTTON_ACTION_OFFSET_GAP', 'DefineButton2 ' + f.buttonId + ': ' + (actionsAt - r.byteOffset()) +
+          ' byte(s) between the records and ActionOffset were skipped', tag);
+      }
+      r.bitPos = actionsAt * 8;
+      for (;;) {
+        var at = r.byteOffset(), size = r.readUI16('BUTTONCONDACTION.CondActionSize'), conditions = r.readUI16('BUTTONCONDACTION.Conditions');
+        if (size !== 0 && size < 4) fail('INVALID_VALUE', 'BUTTONCONDACTION.CondActionSize ' + size + ' is too small', at);
+        var end = size === 0 ? r.end : at + size;
+        if (end > r.end) fail('TRUNCATED_DATA', 'BUTTONCONDACTION at byte ' + at + ' runs past the end of the tag', at);
+        f.actions.push({ conditions: conditions, start: r.byteOffset() - start, end: end - start });
+        r.bitPos = end * 8;
+        if (size === 0) break;
+      }
+      ctx.codeTags.buttonActions += f.actions.length;
+      return f;
+    };
+  }
 
   // PlaceObject2 flag byte, then the fields shared by PlaceObject2 and PlaceObject3 up to ClipDepth.
   function readPlacementFields(r, ctx, flags, f, label) {
@@ -353,6 +438,54 @@
     };
   }
 
+  /* Bitmaps. Only headers are decoded here; pixel data stays in the tag body. Offsets in `fields`
+     (imageStart/imageEnd, alphaStart, dataStart) are relative to the tag body returned by getTagData(). */
+  function sniffImage(bytes, at, end) {
+    var b = bytes, n = end - at;
+    if (n >= 2 && b[at] === 0xff && b[at + 1] === 0xd8) return 'jpeg';
+    if (n >= 4 && b[at] === 0xff && b[at + 1] === 0xd9 && b[at + 2] === 0xff && b[at + 3] === 0xd8) return 'jpeg'; // SWF < 8 "erroneous header"
+    if (n >= 8 && b[at] === 0x89 && b[at + 1] === 0x50 && b[at + 2] === 0x4e && b[at + 3] === 0x47) return 'png';
+    if (n >= 6 && b[at] === 0x47 && b[at + 1] === 0x49 && b[at + 2] === 0x46 && b[at + 3] === 0x38) return 'gif';
+    return 'unknown';
+  }
+  function jpegDecoder(variant) {
+    return function (r) {
+      var start = r.start, f = { characterId: r.readUI16(variant + '.CharacterId') }, alphaOffset = null;
+      if (variant === 'DefineBitsJPEG3' || variant === 'DefineBitsJPEG4') alphaOffset = r.readUI32(variant + '.AlphaDataOffset');
+      if (variant === 'DefineBitsJPEG4') f.deblockParam = r.readFixed8('DefineBitsJPEG4.DeblockParam');
+      var imageAt = r.byteOffset(), imageEnd = r.end;
+      if (alphaOffset !== null) {
+        if (alphaOffset > r.end - imageAt) {
+          fail('TRUNCATED_DATA', variant + '.AlphaDataOffset (' + alphaOffset + ') points past the end of the tag', imageAt);
+        }
+        imageEnd = imageAt + alphaOffset;
+        if (imageEnd < r.end) f.alphaStart = imageEnd - start;
+      }
+      f.imageStart = imageAt - start;
+      f.imageEnd = imageEnd - start;
+      f.imageFormat = variant === 'DefineBits' ? 'jpeg' : sniffImage(r.bytes, imageAt, imageEnd);
+      r.skipRemaining();
+      return f;
+    };
+  }
+  function losslessDecoder(version) {
+    var label = version === 2 ? 'DefineBitsLossless2' : 'DefineBitsLossless';
+    return function (r) {
+      var start = r.start, f = { characterId: r.readUI16(label + '.CharacterId'), losslessVersion: version };
+      var at = r.byteOffset();
+      f.bitmapFormat = r.readUI8(label + '.BitmapFormat');
+      if (f.bitmapFormat !== 3 && f.bitmapFormat !== 5 && !(f.bitmapFormat === 4 && version === 1)) {
+        fail('INVALID_VALUE', label + '.BitmapFormat ' + f.bitmapFormat + ' is not valid', at);
+      }
+      f.width = r.readUI16(label + '.BitmapWidth');
+      f.height = r.readUI16(label + '.BitmapHeight');
+      if (f.bitmapFormat === 3) f.colorTableSize = r.readUI8(label + '.BitmapColorTableSize') + 1;
+      f.dataStart = r.byteOffset() - start;
+      r.skipRemaining();
+      return f;
+    };
+  }
+
   // Tag body decoders: (reader, ctx, tag, level, unparsed) -> fields. Push names onto `unparsed` for
   // fields that exist in the tag but are not decoded; the tag is then reported as 'partial'.
   var DECODERS = {
@@ -362,6 +495,13 @@
     22: shapeDecoder(2),
     32: shapeDecoder(3),
     83: shapeDecoder(4),
+    6: jpegDecoder('DefineBits'),
+    8: function (r) { r.skipRemaining(); return {}; }, // JPEGTables: shared encoding tables for DefineBits
+    21: jpegDecoder('DefineBitsJPEG2'),
+    35: jpegDecoder('DefineBitsJPEG3'),
+    90: jpegDecoder('DefineBitsJPEG4'),
+    20: losslessDecoder(1),
+    36: losslessDecoder(2),
     4: function (r) {
       var f = { characterId: r.readUI16('PlaceObject.CharacterId'), depth: r.readUI16('PlaceObject.Depth'), matrix: r.readMatrix() };
       f.colorTransform = r.remainingBytes() > 0 ? r.readCxform() : null;
@@ -404,19 +544,33 @@
       var f = { move: !!(flags & 0x01), depth: r.readUI16('PlaceObject3.Depth') };
       if ((flags2 & 0x08) || ((flags2 & 0x10) && (flags & 0x02))) f.className = r.readString(ctx.version, 'PlaceObject3.ClassName');
       readPlacementFields(r, ctx, flags, f, 'PlaceObject3');
-      var optional = [[0x02, 'blendMode'], [0x04, 'bitmapCache'], [0x20, 'visible'], [0x40, 'backgroundColor']];
       if (flags2 & 0x01) {
-        unparsed.push('filterList');
-        for (var i = 0; i < optional.length; i++) if (flags2 & optional[i][0]) unparsed.push(optional[i][1]);
-      } else {
-        if (flags2 & 0x02) f.blendMode = r.readUI8('PlaceObject3.BlendMode');
-        if (flags2 & 0x04) f.bitmapCache = r.readUI8('PlaceObject3.BitmapCache');
-        if (flags2 & 0x20) f.visible = r.readUI8('PlaceObject3.Visible');
-        if (flags2 & 0x40) f.backgroundColor = r.readRGBA('PlaceObject3.BackgroundColor');
+        // An unreadable filter list must not cost the placement itself: keep what was read, mark the rest.
+        try {
+          f.filters = readFilterList(r, 'PlaceObject3.SurfaceFilterList');
+        } catch (err) {
+          if (!isReaderError(err)) throw err;
+          unparsed.push('filterList');
+          if (flags & 0x80) { f.hasClipActions = true; ctx.codeTags.clipActions++; unparsed.push('clipActions'); }
+          return f;
+        }
       }
+      if (flags2 & 0x02) f.blendMode = r.readUI8('PlaceObject3.BlendMode');
+      if (flags2 & 0x04) f.bitmapCache = r.readUI8('PlaceObject3.BitmapCache');
+      if (flags2 & 0x20) f.visible = r.readUI8('PlaceObject3.Visible');
+      if (flags2 & 0x40) f.backgroundColor = r.readRGBA('PlaceObject3.BackgroundColor');
       if (flags & 0x80) { f.hasClipActions = true; ctx.codeTags.clipActions++; unparsed.push('clipActions'); }
       return f;
-    }
+    },
+    7: buttonDecoder(1),
+    34: buttonDecoder(2),
+    23: function (r) {
+      // DefineButtonCxform: SWF19 shows one CXFORM, but files may carry one per button record, in order.
+      var f = { buttonId: r.readUI16('DefineButtonCxform.ButtonId'), colorTransforms: [] };
+      while (r.remainingBytes() > 0) f.colorTransforms.push(r.readCxform());
+      return f;
+    },
+    17: function (r) { var f = { buttonId: r.readUI16('DefineButtonSound.ButtonId') }; r.skipRemaining(); return f; }
   };
 
   function diagnose(ctx, level, code, message, tag) {
@@ -468,10 +622,8 @@
     if (unparsed.length) {
       tag.status = 'partial';
       tag.unparsed = unparsed;
-      var afterFilters = unparsed[0] === 'filterList';
       for (var i = 0; i < unparsed.length; i++) {
-        var reason = UNPARSED_REASONS[unparsed[i]] || (afterFilters ? UNPARSED_REASONS.afterFilterList : 'Not decoded yet.');
-        markUnsupported(ctx, tag.name + '.' + unparsed[i], reason, tag);
+        markUnsupported(ctx, tag.name + '.' + unparsed[i], UNPARSED_REASONS[unparsed[i]] || 'Not decoded yet.', tag);
       }
     } else {
       tag.status = 'decoded';
@@ -569,35 +721,60 @@
     list.trailingBytes = end - offset;
   }
 
-  async function inflateZlib(compressed, expectedLength) {
+  var CWS_ERRORS = {
+    unsupported: ['CWS_UNSUPPORTED', 'CWS needs DecompressionStream("deflate"), which this environment does not provide; FWS works without it'],
+    tooLong: ['CWS_LENGTH_MISMATCH', 'Decompressed CWS data exceeds the declared length'],
+    failed: ['CWS_INFLATE_FAILED', 'Could not decompress CWS (zlib)']
+  };
+  var INFLATE_ERRORS = {
+    unsupported: ['INFLATE_UNSUPPORTED', 'zlib data needs DecompressionStream("deflate"), which this environment does not provide'],
+    tooLong: ['INFLATE_TOO_LARGE', 'Decompressed data exceeds the expected length'],
+    failed: ['INFLATE_FAILED', 'Could not decompress zlib data']
+  };
+
+  // Inflates a zlib stream into at most maxLength bytes and stops as soon as the output would exceed it:
+  // with `truncate` the first maxLength bytes are returned, otherwise errors.tooLong is thrown.
+  async function inflateZlib(compressed, maxLength, errors, truncate) {
+    errors = errors || INFLATE_ERRORS;
     var stream;
     try {
       stream = new DecompressionStream('deflate');
     } catch (err) {
-      fail('CWS_UNSUPPORTED', 'CWS needs DecompressionStream("deflate"), which this environment does not provide; FWS works without it');
+      fail(errors.unsupported[0], errors.unsupported[1]);
     }
     var writer = stream.writable.getWriter(), reader = stream.readable.getReader();
     function ignore() {}
     writer.write(compressed).catch(ignore);
     writer.close().catch(ignore);
-    var out = new Uint8Array(expectedLength), size = 0;
+    var out = new Uint8Array(maxLength), size = 0;
     try {
       for (;;) {
         var step = await reader.read();
         if (step.done) break;
         var chunk = step.value;
-        if (chunk.length > expectedLength - size) {
+        if (chunk.length > maxLength - size) {
           reader.cancel().catch(ignore);
-          fail('CWS_LENGTH_MISMATCH', 'Decompressed CWS data exceeds the declared length (' + (expectedLength + 8) + ' bytes)');
+          if (!truncate) fail(errors.tooLong[0], errors.tooLong[1] + ' (' + maxLength + ' bytes)');
+          out.set(chunk.subarray(0, maxLength - size), size);
+          size = maxLength;
+          break;
         }
         out.set(chunk, size);
         size += chunk.length;
       }
     } catch (err) {
       if (isReaderError(err)) throw err;
-      fail('CWS_INFLATE_FAILED', 'Could not decompress CWS (zlib): ' + (err && err.message ? err.message : err));
+      fail(errors.failed[0], errors.failed[1] + ': ' + (err && err.message ? err.message : err));
     }
     return out.subarray(0, size);
+  }
+
+  // Public helper: inflate(Uint8Array, maxLength[, { truncate }]) -> Promise<Uint8Array>. With truncate, output
+  // beyond maxLength is discarded instead of rejected (for payloads whose exact size is known).
+  function inflate(bytes, maxLength, options) {
+    if (!(bytes instanceof Uint8Array)) return Promise.reject(SWFReaderError('INVALID_INPUT', 'inflate() needs a Uint8Array'));
+    if (!Number.isInteger(maxLength) || maxLength < 0) return Promise.reject(SWFReaderError('INVALID_OPTION', 'inflate() needs a non-negative integer maxLength'));
+    return inflateZlib(bytes, maxLength, INFLATE_ERRORS, !!(options && options.truncate));
   }
 
   function resolveOptions(options) {
@@ -648,7 +825,7 @@
 
     var diagnostics = [], bytes;
     if (signature === 'CWS') {
-      var payload = await inflateZlib(source.subarray(8), declaredLength - 8);
+      var payload = await inflateZlib(source.subarray(8), declaredLength - 8, CWS_ERRORS);
       if (payload.length !== declaredLength - 8) {
         fail('CWS_LENGTH_MISMATCH', 'Declared length is ' + declaredLength + ' bytes but the decompressed SWF has ' + (payload.length + 8));
       }
@@ -680,7 +857,7 @@
     var ctx = {
       bytes: bytes, version: version, opts: opts, tagCount: 0, spriteCount: 0,
       diagnostics: diagnostics, unsupported: Object.create(null), unsupportedList: [],
-      background: null, fileAttributes: null, codeTags: { avm1: 0, avm2: 0, clipActions: 0 }
+      background: null, fileAttributes: null, codeTags: { avm1: 0, avm2: 0, clipActions: 0, buttonActions: 0 }
     };
     var list = { tags: [], frames: [], endFound: false, trailingBytes: 0 };
     parseTagList(ctx, header.byteOffset(), bytes.length, 0, '', list);
@@ -726,7 +903,7 @@
   }
 
   global.SWFReader = Object.freeze({
-    version: VERSION, load: load, BitReader: BitReader,
+    version: VERSION, load: load, inflate: inflate, BitReader: BitReader,
     defaultOptions: DEFAULT_OPTIONS, tagNames: Object.freeze(TAG_NAMES)
   });
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -15,11 +15,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;b
 </style>
 </head>
 <body>
-<h1>RetroFlash.js <small>Player · milestone 1</small></h1>
+<h1>RetroFlash.js <small>Player · v0.3</small></h1>
 <p>Plays the vector part of a SWF on Canvas 2D: <code>DefineShape</code> 1–4 (solid fills, linear/radial gradients, lines), the display list,
-the root and <code>DefineSprite</code> timelines, and <code>clipDepth</code> masks. ActionScript is never executed, so movies with
-<code>stop()</code> loop. Bitmaps, text, buttons, sound and morph shapes are not drawn yet; they are listed below.
-Try <code>tests/fixtures/valid/fws-animation.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
+the root and <code>DefineSprite</code> timelines, <code>clipDepth</code> masks, and bitmaps: JPEG, PNG, GIF, JPEG with alpha, and lossless.
+Frame scripts run through a controlled AVM1 subset (stop, play, goto, setTarget); AS2 control flow and calls are not followed yet.
+Buttons respond to the mouse (hover, press, release) and to the keyboard once the canvas has focus.
+Text, sound and morph shapes are not drawn yet; they are listed below.
+Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code> or <code>fws-buttons.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>
 <input id="file" type="file" accept=".swf,application/x-shockwave-flash">
 <p id="status">No movie loaded.</p>
@@ -40,7 +42,7 @@ Try <code>tests/fixtures/valid/fws-animation.swf</code>. Structure inspector: <a
   var $=function(id){return document.getElementById(id);};
   var player=new RetroFlash.Player({canvas:$('stage')}), buttons=['play','pause','stop','step'];
   function setEnabled(on){buttons.concat('seek').forEach(function(id){$(id).disabled=!on;});}
-  function showFrame(){var info=player.getInfo();$('frame').textContent='frame '+info.currentFrame+' / '+info.frameCount;$('seek').value=info.currentFrame;}
+  function showFrame(){var info=player.getInfo();$('frame').textContent='frame '+info.currentFrame+' / '+info.frameCount+(info.rootPlaying?'':' · stopped by script');$('seek').value=info.currentFrame;}
   function showUnsupported(){
     var body=$('unsupported');body.replaceChildren();
     var list=player.getDiagnostics().unsupported;

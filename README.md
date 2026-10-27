@@ -3,21 +3,28 @@ A lightweight, dependency-free Flash SWF player and ActionScript runtime, built 
 
 ## Current state
 
-RetroFlash.js plays the **vector part** of a SWF on Canvas 2D (milestone 1):
+RetroFlash.js plays SWF animations on Canvas 2D:
 
 - `DefineShape` 1–4: solid fills, linear, radial and focal gradients, and lines;
+- bitmaps:
+  - `DefineBits` with `JPEGTables`;
+  - `DefineBitsJPEG2/3/4` (JPEG, PNG, or GIF, and JPEG with an alpha plane);
+  - `DefineBitsLossless/Lossless2`;
+  - bitmap fills, clipped or repeating;
 - the display list, built from `PlaceObject`/`RemoveObject`;
 - the timelines of the root movie and of nested `DefineSprite` instances;
-- `clipDepth` masks.
+- `clipDepth` masks;
+- **buttons** (`DefineButton`/`DefineButton2`): up/over/down states, hit areas, the hand cursor, and pointer and keyboard events with their actions;
+- a controlled **AVM1 subset** for timeline control in frame scripts and button actions: `stop`, `play`, `nextFrame`/`prevFrame`, `gotoAndPlay`/`gotoAndStop` by frame or label, and `tellTarget`/`setTarget`. It never evaluates JavaScript or navigates.
 
-It **never executes ActionScript**, so a movie that relies on `stop()` keeps looping. Bitmaps, text, buttons, sound, and morph shapes are not drawn yet; the player lists them in `getDiagnostics().unsupported`.
+AS2 control flow and method calls (`if`, functions, `_root.gotoAndPlay()`) are not followed yet. Text, sound, and morph shapes are not drawn. All of these are listed in `getDiagnostics().unsupported`.
 
 The code lives in [`src/`](./src/). Two classic scripts, with no dependencies:
 
 | File | Role |
 |---|---|
-| `src/swf-reader.js` | Parser (`SWFReader`, v0.3): FWS and CWS, a bounds-checked tag index, and decoded placements and shapes |
-| `src/retroflash.js` | Player (`RetroFlash`, v0.1): dictionary, display list, timelines, and the Canvas renderer |
+| `src/swf-reader.js` | Parser (`SWFReader`, v0.4): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, buttons, and filter lists, and `inflate` |
+| `src/retroflash.js` | Player (`RetroFlash`, v0.3): dictionary, display list, timelines, bitmap decoding, buttons and input, the AVM1 subset, and the Canvas renderer |
 
 ```html
 <canvas id="stage"></canvas>

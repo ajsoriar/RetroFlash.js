@@ -25,5 +25,6 @@ if (typeof globalThis.DecompressionStream !== 'function') {
 }
 
 require(path.join(__dirname, '..', '..', 'src', 'swf-reader.js'));
+require(path.join(__dirname, '..', '..', 'src', 'retroflash.js'));
 
-module.exports = { SWFReader: globalThis.SWFReader, decompression };
+module.exports = { SWFReader: globalThis.SWFReader, RetroFlash: globalThis.RetroFlash, decompression };

@@ -79,6 +79,103 @@ function cxform(w, c, withAlpha) {
 
 function body(fn) { const w = new BitWriter(); fn(w); return w.bytes(); }
 
+/* DefineShape 1-4 writer. Coordinates are absolute twips; the writer turns them into SWF deltas.
+   shape = { version, bounds, edgeBounds?, windingRule?, fills: [fill], lines: [line], records: [record] }
+   fill:   { color: [r, g, b, a?] } | { linear|radial: { matrix, stops: [[ratio, [r, g, b, a?]]] } }
+           | { focal: { matrix, stops, focalPoint } } | { bitmap: { id, matrix } }
+   line:   { width, color: [r, g, b, a?], cap?, join? }       (cap/join only in version 4)
+   record: { move: [x, y], fill0?, fill1?, line? } | { to: [x, y] } | { curve: [cx, cy, x, y] } */
+const SHAPE_TAG = { 1: 2, 2: 22, 3: 32, 4: 83 };
+const unsignedBits = (n) => { let b = 0; while (2 ** b <= n) b++; return b; };
+
+function shapeColor(w, c, version) {
+  w.u8(c[0]).u8(c[1]).u8(c[2]);
+  if (version >= 3) w.u8(c[3] === undefined ? 255 : c[3]);
+}
+
+function gradientRecord(w, g, version, focal) {
+  w.align().ub(2, g.spread || 0).ub(2, g.interpolation || 0).ub(4, g.stops.length);
+  for (const [ratio, c] of g.stops) { w.u8(ratio); shapeColor(w, c, version); }
+  if (focal) w.u16(Math.round(g.focalPoint * 256) & 0xffff);
+}
+
+function fillStyle(w, f, version) {
+  if (f.color) { w.u8(0x00); shapeColor(w, f.color, version); }
+  else if (f.linear) { w.u8(0x10); matrix(w, f.linear.matrix); gradientRecord(w, f.linear, version, false); }
+  else if (f.radial) { w.u8(0x12); matrix(w, f.radial.matrix); gradientRecord(w, f.radial, version, false); }
+  else if (f.focal) { w.u8(0x13); matrix(w, f.focal.matrix); gradientRecord(w, f.focal, version, true); }
+  else if (f.bitmap) { w.u8(0x41).u16(f.bitmap.id); matrix(w, f.bitmap.matrix || {}); }
+  else throw new Error('unknown fill');
+}
+
+function lineStyle(w, l, version) {
+  w.u16(l.width);
+  if (version < 4) return shapeColor(w, l.color, version);
+  const cap = l.cap || 0, join = l.join || 0;
+  w.ub(2, cap).ub(2, join).ub(1, 0).ub(1, 0).ub(1, 0).ub(1, 0).ub(5, 0).ub(1, 0).ub(2, cap);
+  if (join === 2) w.u16(Math.round((l.miterLimit || 3) * 256));
+  shapeColor(w, l.color, 4);
+}
+
+function styleArrays(w, fills, lines, version) {
+  for (const [list, write] of [[fills, fillStyle], [lines, lineStyle]]) {
+    if (list.length >= 0xff && version >= 2) w.u8(0xff).u16(list.length);
+    else w.u8(list.length);
+    for (const s of list) write(w, s, version);
+  }
+  const bits = { fill: unsignedBits(fills.length), line: unsignedBits(lines.length) };
+  w.ub(4, bits.fill).ub(4, bits.line);
+  return bits;
+}
+
+function shapeRecords(w, records, bits) {
+  let x = 0, y = 0;
+  for (const r of records) {
+    if (r.to) {
+      const dx = r.to[0] - x, dy = r.to[1] - y, n = Math.max(signedBits(dx, dy), 2);
+      w.bit(1).bit(1).ub(4, n - 2);
+      if (dx && dy) w.bit(1).sb(n, dx).sb(n, dy);
+      else if (dx === 0) w.bit(0).bit(1).sb(n, dy);
+      else w.bit(0).bit(0).sb(n, dx);
+      [x, y] = r.to;
+    } else if (r.curve) {
+      const [cx, cy, ax, ay] = r.curve;
+      const d = [cx - x, cy - y, ax - cx, ay - cy], n = Math.max(signedBits(...d), 2);
+      w.bit(1).bit(0).ub(4, n - 2);
+      for (const v of d) w.sb(n, v);
+      [x, y] = [ax, ay];
+    } else {
+      const has = (k) => r[k] !== undefined;
+      if (!r.move && !has('fill0') && !has('fill1') && !has('line')) throw new Error('empty style change record');
+      w.bit(0).bit(0).bit(has('line')).bit(has('fill1')).bit(has('fill0')).bit(!!r.move);
+      if (r.move) {
+        const n = signedBits(...r.move);
+        w.ub(5, n).sb(n, r.move[0]).sb(n, r.move[1]);
+        [x, y] = r.move;
+      }
+      if (has('fill0')) w.ub(bits.fill, r.fill0);
+      if (has('fill1')) w.ub(bits.fill, r.fill1);
+      if (has('line')) w.ub(bits.line, r.line);
+    }
+  }
+  w.bit(0).ub(5, 0); // EndShapeRecord
+  return w.align();
+}
+
+function defineShape(id, shape) {
+  const version = shape.version || 1;
+  return tag(SHAPE_TAG[version], body((w) => {
+    w.u16(id);
+    rect(w, shape.bounds);
+    if (version === 4) {
+      rect(w, shape.edgeBounds || shape.bounds);
+      w.u8(shape.windingRule ? 0x04 : 0x00);
+    }
+    const bits = styleArrays(w, shape.fills || [], shape.lines || [], version);
+    shapeRecords(w, shape.records, bits);
+  }));
+}
+
 // RECORDHEADER + body. `long` forces the 6-byte form; `length` overrides the declared length.
 function tag(code, data = new Uint8Array(0), { long = false, length } = {}) {
   const declared = length === undefined ? data.length : length;
@@ -113,4 +210,4 @@ function swf({ signature = 'FWS', version = 10, declaredLength, append, ...rest 
   return new Uint8Array(Buffer.concat([Buffer.from(prefix), payload, Buffer.from(append || [])]));
 }
 
-module.exports = { BitWriter, signedBits, rect, matrix, cxform, body, tag, T, swf, movieBody, STAGE_550x400 };
+module.exports = { BitWriter, signedBits, rect, matrix, cxform, body, tag, defineShape, T, swf, movieBody, STAGE_550x400 };

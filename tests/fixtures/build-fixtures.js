@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { body, tag, T, swf, matrix, cxform, rect, movieBody, STAGE_550x400 } = require('../support/swf-builder');
+const { buildAnimation } = require('./animation');
 
 const fileAttributes = (raw = 0) => tag(T.FileAttributes, body((w) => w.u32(raw)));
 const background = (r, g, b) => tag(T.SetBackgroundColor, body((w) => w.rgb({ r, g, b })));
@@ -115,7 +116,7 @@ const fixtures = [
     build: () => swf({ fps: 12.5, frameCount: 2, tags: timelineTags() }),
     expect: {
       signature: 'FWS', version: 10, width: 550, height: 400, fps: 12.5, frameCount: 2, actualFrameCount: 2, tags: 16,
-      diagnostics: [], unsupported: ['actionscript:DoAction', 'tag:DefineShape']
+      diagnostics: [], unsupported: ['actionscript:DoAction']
     }
   },
   {
@@ -137,6 +138,16 @@ const fixtures = [
       signature: 'FWS', version: 10, width: 550, height: 400, fps: 24, frameCount: 1, actualFrameCount: 1, tags: 5,
       diagnostics: ['SPRITE_FRAME_COUNT_MISMATCH', 'SPRITE_MISSING_END', 'TAG_NOT_ALLOWED_IN_SPRITE', 'TAG_NOT_ALLOWED_IN_SPRITE'],
       unsupported: ['actionscript:DoInitAction']
+    }
+  },
+  {
+    file: 'valid/fws-animation.swf',
+    description: 'Player fixture (tests/fixtures/animation.js): 48-frame vector animation with DefineShape 1-4 (solid, linear, ' +
+      'radial, shared-edge fills, LINESTYLE2), a clipDepth mask, a removal at frame 40 and nested DefineSprite timelines.',
+    build: buildAnimation,
+    expect: {
+      signature: 'FWS', version: 8, width: 480, height: 320, fps: 24, frameCount: 48, actualFrameCount: 48, tags: 164,
+      diagnostics: [], unsupported: []
     }
   },
   // ---- loads with diagnostics --------------------------------------------------------------------------

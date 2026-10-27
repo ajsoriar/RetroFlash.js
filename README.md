@@ -3,9 +3,42 @@ A lightweight, dependency-free Flash SWF player and ActionScript runtime, built 
 
 ## Current state
 
-The player does not exist yet. What exists today is the SWF structure reader in [`src/`](./src/) (v0.2). It reads FWS and CWS headers and builds a bounds-checked tag index, including the contents of `DefineSprite`. It also decodes placement records (`MATRIX`, `CXFORM`, `CXFORMWITHALPHA`) and reports malformed or unsupported content explicitly.
+RetroFlash.js plays the **vector part** of a SWF on Canvas 2D (milestone 1):
 
-It does not render anything and never executes ActionScript. The browser demo is [`demo/index.html`](./demo/index.html); open it directly, no server needed.
+- `DefineShape` 1–4: solid fills, linear, radial and focal gradients, and lines;
+- the display list, built from `PlaceObject`/`RemoveObject`;
+- the timelines of the root movie and of nested `DefineSprite` instances;
+- `clipDepth` masks.
+
+It **never executes ActionScript**, so a movie that relies on `stop()` keeps looping. Bitmaps, text, buttons, sound, and morph shapes are not drawn yet; the player lists them in `getDiagnostics().unsupported`.
+
+The code lives in [`src/`](./src/). Two classic scripts, with no dependencies:
+
+| File | Role |
+|---|---|
+| `src/swf-reader.js` | Parser (`SWFReader`, v0.3): FWS and CWS, a bounds-checked tag index, and decoded placements and shapes |
+| `src/retroflash.js` | Player (`RetroFlash`, v0.1): dictionary, display list, timelines, and the Canvas renderer |
+
+```html
+<canvas id="stage"></canvas>
+<input id="file" type="file" accept=".swf">
+<script src="src/swf-reader.js"></script>
+<script src="src/retroflash.js"></script>
+<script>
+  const player = new RetroFlash.Player({ canvas: document.getElementById('stage') });
+  document.getElementById('file').addEventListener('change', async (event) => {
+    await player.load(event.target.files[0]);
+    player.play();
+  });
+</script>
+```
+
+The demos open directly, with no server:
+
+- [`demo/player.html`](./demo/player.html): the player;
+- [`demo/index.html`](./demo/index.html): the structure inspector.
+
+The API is documented in [`src/README.md`](./src/README.md).
 
 ## Tests
 

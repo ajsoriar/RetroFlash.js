@@ -11,9 +11,9 @@ h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}#drop{display:block;padd
 </style>
 </head>
 <body>
-<h1>SWF Reader <small>v0.2 · Phase 1</small></h1>
+<h1>SWF Reader <small>v0.3 · inspector</small></h1>
 <p>Structure inspection only: header, tag index (including DefineSprite contents), and decoded placement records
-(MATRIX, CXFORM, CXFORMWITHALPHA). No rendering. ActionScript is detected and listed, never executed. No external libraries.</p>
+(MATRIX, CXFORM, CXFORMWITHALPHA). ActionScript is detected and listed, never executed. No external libraries. To play a movie, open <a href="player.html">player.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>
 <input id="file" type="file" accept=".swf,application/x-shockwave-flash">
 <p id="status">Select a file to get started. Test files: <code>tests/fixtures/</code>; expected results: <code>tests/COMPATIBILITY.md</code>.</p>

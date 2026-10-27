@@ -13,7 +13,7 @@ test('public API: frozen SWFReader with load, BitReader, version and tag names',
   assert.ok(Object.isFrozen(SWFReader));
   assert.strictEqual(typeof SWFReader.load, 'function');
   assert.strictEqual(typeof SWFReader.BitReader, 'function');
-  assert.strictEqual(SWFReader.version, '0.2.0');
+  assert.strictEqual(SWFReader.version, '0.3.0');
   assert.strictEqual(SWFReader.tagNames[39], 'DefineSprite');
   assert.deepStrictEqual({ ...SWFReader.defaultOptions }, { maxFileBytes: 52428800, maxTags: 500000, maxSpriteDepth: 4, strict: false });
 });
@@ -76,7 +76,7 @@ test('timeline fixture: frames, labels, long header and every decoded placement'
     { number: 2, endTagIndex: 14, labels: ['outro'] }
   ]);
   assert.deepStrictEqual(t.map((x) => x.frame), [1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3], 'End reports the frame after the last ShowFrame (as in v0.1)');
-  assert.deepStrictEqual(t.map((x) => x.status), ['decoded', 'decoded', 'indexed', 'decoded', 'decoded', 'decoded', 'decoded',
+  assert.deepStrictEqual(t.map((x) => x.status), ['decoded', 'decoded', 'decoded', 'decoded', 'decoded', 'decoded', 'decoded',
     'not-executed', 'decoded', 'decoded', 'decoded', 'decoded', 'decoded', 'decoded', 'decoded', 'decoded']);
 
   assert.deepStrictEqual(t[5].fields, {

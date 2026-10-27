@@ -1,4 +1,4 @@
-/* SWFReader v0.2 - dependency-free SWF structure reader (browser classic script; also loadable from Node for tests).
+/* SWFReader v0.3 - dependency-free SWF structure reader (browser classic script; also loadable from Node for tests).
    API: const movie = await SWFReader.load(fileOrBuffer[, options]);
    SWFReader parses the header, the tag index (recursively inside DefineSprite) and a small set of tag bodies.
    It does NOT render and NEVER executes ActionScript. Anything it does not decode is reported in
@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
 
-  var VERSION = '0.2.0';
+  var VERSION = '0.3.0';
 
   var TAG_NAMES = {
     0:'End', 1:'ShowFrame', 2:'DefineShape', 4:'PlaceObject', 5:'RemoveObject',
@@ -157,6 +157,11 @@
     what = what || 'RGBA';
     return { r: this.readUI8(what), g: this.readUI8(what), b: this.readUI8(what), a: this.readUI8(what) };
   };
+  // FIXED8: signed 8.8 fixed point stored as a little-endian 16-bit value.
+  BitReader.prototype.readFixed8 = function (what) {
+    var value = this.readUI16(what || 'FIXED8');
+    return (value >= 0x8000 ? value - 0x10000 : value) / 256;
+  };
   // RECT: coordinates in twips (1/20 px).
   BitReader.prototype.readRect = function () {
     this.align();
@@ -225,11 +230,138 @@
     return f;
   }
 
+  /* Shapes (DefineShape 1-4). `shapeVersion` selects the per-version layout: RGB colours in versions 1-2,
+     RGBA from 3, extended style counts from 2, LINESTYLE2 and focal gradients in 4. Colours are always
+     returned as {r, g, b, a} (a = 255 when the file stores RGB). */
+  function readShapeColor(r, shapeVersion, what) {
+    if (shapeVersion >= 3) return r.readRGBA(what);
+    var c = r.readRGB(what);
+    c.a = 255;
+    return c;
+  }
+  function readGradient(r, shapeVersion, focal) {
+    r.align();
+    var g = { spreadMode: r.readUB(2, 'GRADIENT.SpreadMode'), interpolationMode: r.readUB(2, 'GRADIENT.InterpolationMode'), stops: [] };
+    var count = r.readUB(4, 'GRADIENT.NumGradients');
+    for (var i = 0; i < count; i++) {
+      g.stops.push({ ratio: r.readUI8('GRADRECORD.Ratio'), color: readShapeColor(r, shapeVersion, 'GRADRECORD.Color') });
+    }
+    if (focal) g.focalPoint = r.readFixed8('FOCALGRADIENT.FocalPoint');
+    return g;
+  }
+  function readFillStyle(r, shapeVersion) {
+    var at = r.byteOffset(), type = r.readUI8('FILLSTYLE.FillStyleType');
+    if (type === 0x00) return { type: 'solid', color: readShapeColor(r, shapeVersion, 'FILLSTYLE.Color') };
+    if (type === 0x10 || type === 0x12 || (type === 0x13 && shapeVersion >= 4)) {
+      return { type: type === 0x10 ? 'linear' : type === 0x12 ? 'radial' : 'focal', matrix: r.readMatrix(), gradient: readGradient(r, shapeVersion, type === 0x13) };
+    }
+    if (type >= 0x40 && type <= 0x43) {
+      return { type: 'bitmap', bitmapId: r.readUI16('FILLSTYLE.BitmapId'), matrix: r.readMatrix(), repeat: type === 0x40 || type === 0x42, smooth: type <= 0x41 };
+    }
+    fail('INVALID_VALUE', 'Unknown FILLSTYLE type 0x' + type.toString(16) + ' for DefineShape' + (shapeVersion > 1 ? shapeVersion : '') + ' at byte ' + at, at);
+  }
+  function readLineStyle(r, shapeVersion) {
+    if (shapeVersion < 4) return { width: r.readUI16('LINESTYLE.Width'), color: readShapeColor(r, shapeVersion, 'LINESTYLE.Color') };
+    var s = { width: r.readUI16('LINESTYLE2.Width'), startCap: r.readUB(2, 'LINESTYLE2.StartCapStyle'), join: r.readUB(2, 'LINESTYLE2.JoinStyle') };
+    var hasFill = r.readUB(1, 'LINESTYLE2.HasFillFlag');
+    s.noHScale = r.readUB(1, 'LINESTYLE2.NoHScaleFlag') === 1;
+    s.noVScale = r.readUB(1, 'LINESTYLE2.NoVScaleFlag') === 1;
+    s.pixelHinting = r.readUB(1, 'LINESTYLE2.PixelHintingFlag') === 1;
+    r.readUB(5, 'LINESTYLE2.Reserved');
+    s.noClose = r.readUB(1, 'LINESTYLE2.NoClose') === 1;
+    s.endCap = r.readUB(2, 'LINESTYLE2.EndCapStyle');
+    if (s.join === 2) s.miterLimit = r.readFixed8('LINESTYLE2.MiterLimitFactor');
+    if (hasFill) s.fill = readFillStyle(r, shapeVersion);
+    else s.color = r.readRGBA('LINESTYLE2.Color');
+    return s;
+  }
+  function readStyleCount(r, shapeVersion, what) {
+    var count = r.readUI8(what);
+    return count === 0xff && shapeVersion >= 2 ? r.readUI16(what + 'Extended') : count;
+  }
+  function readShapeStyles(r, shapeVersion) {
+    var styles = { fillStyles: [], lineStyles: [] }, i, count;
+    count = readStyleCount(r, shapeVersion, 'FILLSTYLEARRAY.FillStyleCount');
+    for (i = 0; i < count; i++) styles.fillStyles.push(readFillStyle(r, shapeVersion));
+    count = readStyleCount(r, shapeVersion, 'LINESTYLEARRAY.LineStyleCount');
+    for (i = 0; i < count; i++) styles.lineStyles.push(readLineStyle(r, shapeVersion));
+    styles.fillBits = r.readUB(4, 'SHAPE.NumFillBits');
+    styles.lineBits = r.readUB(4, 'SHAPE.NumLineBits');
+    return styles;
+  }
+  // SHAPERECORDs up to EndShapeRecord. Edges keep their deltas (twips); MoveTo is absolute, as in the spec.
+  function readShapeRecords(r, shapeVersion, fillBits, lineBits) {
+    var records = [], n;
+    for (;;) {
+      if (r.readUB(1, 'SHAPERECORD.TypeFlag')) {
+        if (r.readUB(1, 'EDGERECORD.StraightFlag')) {
+          n = r.readUB(4, 'STRAIGHTEDGERECORD.NumBits') + 2;
+          if (r.readUB(1, 'STRAIGHTEDGERECORD.GeneralLineFlag')) {
+            records.push({ type: 'line', dx: r.readSB(n, 'STRAIGHTEDGERECORD.DeltaX'), dy: r.readSB(n, 'STRAIGHTEDGERECORD.DeltaY') });
+          } else if (r.readUB(1, 'STRAIGHTEDGERECORD.VertLineFlag')) {
+            records.push({ type: 'line', dx: 0, dy: r.readSB(n, 'STRAIGHTEDGERECORD.DeltaY') });
+          } else {
+            records.push({ type: 'line', dx: r.readSB(n, 'STRAIGHTEDGERECORD.DeltaX'), dy: 0 });
+          }
+        } else {
+          n = r.readUB(4, 'CURVEDEDGERECORD.NumBits') + 2;
+          records.push({
+            type: 'curve', cdx: r.readSB(n, 'CURVEDEDGERECORD.ControlDeltaX'), cdy: r.readSB(n, 'CURVEDEDGERECORD.ControlDeltaY'),
+            adx: r.readSB(n, 'CURVEDEDGERECORD.AnchorDeltaX'), ady: r.readSB(n, 'CURVEDEDGERECORD.AnchorDeltaY')
+          });
+        }
+        continue;
+      }
+      // StateNewStyles, StateLineStyle, StateFillStyle1, StateFillStyle0, StateMoveTo; all zero = EndShapeRecord.
+      var flags = r.readUB(5, 'STYLECHANGERECORD.Flags');
+      if (!flags) break;
+      var rec = { type: 'style' };
+      if (flags & 0x01) {
+        n = r.readUB(5, 'STYLECHANGERECORD.MoveBits');
+        rec.moveTo = { x: r.readSB(n, 'STYLECHANGERECORD.MoveDeltaX'), y: r.readSB(n, 'STYLECHANGERECORD.MoveDeltaY') };
+      }
+      if (flags & 0x02) rec.fill0 = r.readUB(fillBits, 'STYLECHANGERECORD.FillStyle0');
+      if (flags & 0x04) rec.fill1 = r.readUB(fillBits, 'STYLECHANGERECORD.FillStyle1');
+      if (flags & 0x08) rec.line = r.readUB(lineBits, 'STYLECHANGERECORD.LineStyle');
+      if (flags & 0x10) {
+        var styles = readShapeStyles(r, shapeVersion);
+        rec.newStyles = { fillStyles: styles.fillStyles, lineStyles: styles.lineStyles };
+        fillBits = styles.fillBits;
+        lineBits = styles.lineBits;
+      }
+      records.push(rec);
+    }
+    r.align();
+    return records;
+  }
+  function shapeDecoder(shapeVersion) {
+    var label = 'DefineShape' + (shapeVersion > 1 ? shapeVersion : '');
+    return function (r) {
+      var f = { shapeId: r.readUI16(label + '.ShapeId'), shapeVersion: shapeVersion, bounds: r.readRect() };
+      if (shapeVersion === 4) {
+        f.edgeBounds = r.readRect();
+        var flags = r.readUI8('DefineShape4.Flags');
+        f.usesFillWindingRule = !!(flags & 0x04);
+        f.usesNonScalingStrokes = !!(flags & 0x02);
+        f.usesScalingStrokes = !!(flags & 0x01);
+      }
+      var styles = readShapeStyles(r, shapeVersion);
+      f.fillStyles = styles.fillStyles;
+      f.lineStyles = styles.lineStyles;
+      f.records = readShapeRecords(r, shapeVersion, styles.fillBits, styles.lineBits);
+      return f;
+    };
+  }
+
   // Tag body decoders: (reader, ctx, tag, level, unparsed) -> fields. Push names onto `unparsed` for
   // fields that exist in the tag but are not decoded; the tag is then reported as 'partial'.
   var DECODERS = {
     0: function () { return {}; },
     1: function () { return {}; },
+    2: shapeDecoder(1),
+    22: shapeDecoder(2),
+    32: shapeDecoder(3),
+    83: shapeDecoder(4),
     4: function (r) {
       var f = { characterId: r.readUI16('PlaceObject.CharacterId'), depth: r.readUI16('PlaceObject.Depth'), matrix: r.readMatrix() };
       f.colorTransform = r.remainingBytes() > 0 ? r.readCxform() : null;

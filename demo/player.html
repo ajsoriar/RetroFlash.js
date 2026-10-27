@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RetroFlash.js - Player</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif}body{max-width:1050px;margin:35px auto;padding:0 18px;background:#111827;color:#e5e7eb}
+h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}a{color:#67e8f9}
+#drop{display:block;padding:22px;border:2px dashed #6b7280;border-radius:14px;text-align:center;cursor:pointer;margin:20px 0;background:#1f2937}#drop.over{border-color:#67e8f9}input[type=file]{display:none}
+#stage{display:block;max-width:100%;border:1px solid #374151;background:#000}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+button{padding:7px 14px;border:1px solid #4b5563;border-radius:8px;background:#1f2937;color:#e5e7eb;cursor:pointer;font:inherit}button:hover:not(:disabled){border-color:#67e8f9}button:disabled{opacity:.45;cursor:default}
+#seek{flex:1;min-width:160px}#frame{font-variant-numeric:tabular-nums;min-width:120px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;border-bottom:1px solid #374151;text-align:left;vertical-align:top}.empty{color:#6b7280}
+</style>
+</head>
+<body>
+<h1>RetroFlash.js <small>Player · milestone 1</small></h1>
+<p>Plays the vector part of a SWF on Canvas 2D: <code>DefineShape</code> 1–4 (solid fills, linear/radial gradients, lines), the display list,
+the root and <code>DefineSprite</code> timelines, and <code>clipDepth</code> masks. ActionScript is never executed, so movies with
+<code>stop()</code> loop. Bitmaps, text, buttons, sound and morph shapes are not drawn yet; they are listed below.
+Try <code>tests/fixtures/valid/fws-animation.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
+<label id="drop" for="file">Drop a .swf file here or click to open one</label>
+<input id="file" type="file" accept=".swf,application/x-shockwave-flash">
+<p id="status">No movie loaded.</p>
+<canvas id="stage" width="480" height="320"></canvas>
+<div class="controls">
+  <button id="play" disabled>Play</button><button id="pause" disabled>Pause</button><button id="stop" disabled>Stop</button>
+  <button id="step" disabled title="Advance one frame">Step ▸</button>
+  <input id="seek" type="range" min="1" max="1" value="1" disabled aria-label="Frame">
+  <span id="frame">–</span>
+</div>
+<h2>Not drawn or not supported</h2>
+<table><thead><tr><th>Feature</th><th>Count</th><th>Reason</th></tr></thead><tbody id="unsupported"></tbody></table>
+<script src="../src/swf-reader.js"></script>
+<script src="../src/retroflash.js"></script>
+<script>
+(function(){
+  'use strict';
+  var $=function(id){return document.getElementById(id);};
+  var player=new RetroFlash.Player({canvas:$('stage')}), buttons=['play','pause','stop','step'];
+  function setEnabled(on){buttons.concat('seek').forEach(function(id){$(id).disabled=!on;});}
+  function showFrame(){var info=player.getInfo();$('frame').textContent='frame '+info.currentFrame+' / '+info.frameCount;$('seek').value=info.currentFrame;}
+  function showUnsupported(){
+    var body=$('unsupported');body.replaceChildren();
+    var list=player.getDiagnostics().unsupported;
+    list.forEach(function(u){var tr=document.createElement('tr');[u.feature,u.count,u.reason].forEach(function(v){var td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);});body.appendChild(tr);});
+    if(!list.length){var tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=3;td.className='empty';td.textContent='Nothing reported';tr.appendChild(td);body.appendChild(tr);}
+  }
+  player.on('frame',showFrame).on('warning',showUnsupported);
+  async function open(file){
+    if(!file)return;
+    $('status').textContent='Loading '+file.name+'…';setEnabled(false);
+    try{
+      var info=await player.load(file);
+      $('status').textContent=file.name+' — SWF '+info.version+' · '+info.width+'×'+info.height+' px · '+info.fps+' fps · '+info.frameCount+' frames';
+      $('seek').max=info.frameCount;setEnabled(true);showFrame();showUnsupported();
+      player.play();
+      window.player=player; // optional access from DevTools
+    }catch(err){$('status').textContent='Error'+(err.code?' '+err.code:'')+': '+err.message;console.error(err);}
+  }
+  $('play').addEventListener('click',function(){player.play();});
+  $('pause').addEventListener('click',function(){player.pause();});
+  $('stop').addEventListener('click',function(){player.stop();});
+  $('step').addEventListener('click',function(){player.pause();player.step();});
+  $('seek').addEventListener('input',function(){player.pause();player.seek(Number($('seek').value));});
+  $('file').addEventListener('change',function(){open($('file').files[0]);});
+  var drop=$('drop');
+  drop.addEventListener('dragover',function(e){e.preventDefault();drop.classList.add('over');});
+  drop.addEventListener('dragleave',function(){drop.classList.remove('over');});
+  drop.addEventListener('drop',function(e){e.preventDefault();drop.classList.remove('over');open(e.dataTransfer.files[0]);});
+})();
+</script>
+</body>
+</html>

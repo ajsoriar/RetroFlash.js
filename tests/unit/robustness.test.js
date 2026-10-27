@@ -215,7 +215,7 @@ const sprite = (id, ...tags) => B.tag(B.T.DefineSprite, Buffer.concat([B.body((w
 
 test('limits: defaults, overrides, and invalid values', () => {
   const D = RetroFlash.defaultLimits;
-  assert.deepStrictEqual(Object.keys(D), ['maxNesting', 'maxInstances', 'maxBitmapPixels', 'maxTotalBitmapPixels', 'maxActionBlocks', 'maxActionSteps']);
+  assert.deepStrictEqual(Object.keys(D), ['maxNesting', 'maxInstances', 'maxBitmapPixels', 'maxTotalBitmapPixels', 'maxActionBlocks', 'maxActionSteps', 'maxActionStack']);
   assert.ok(Object.isFrozen(D));
   assert.deepStrictEqual(headlessPlayer().limits, D);
   const custom = headlessPlayer({ maxNesting: 4, maxActionSteps: 50, maxBitmapPixels: null });
@@ -276,6 +276,40 @@ test('limits: the action budget covers a whole tick, and each input event gets a
   assert.strictEqual(tight.input.down(), true);
   tight.afterInput();
   assert.strictEqual(tight.getInfo().rootPlaying, false, 'the press starts with a fresh budget');
+});
+
+test('limits: decoded actions are budgeted per movie across blocks; cached blocks keep running', async () => {
+  const FRAMES = 30, tags = [];
+  for (let i = 0; i < FRAMES; i++) tags.push(B.doAction(B.A.pushString('a'), [0x17]), show()); // Push (6 bytes), Pop (1)
+  tags.push(B.doAction(), show()); // frame 31: an empty block
+  const { env, root, reported } = await run([...tags, end()], { frameCount: FRAMES + 1 });
+  const scripts = env.scripts, PER_BLOCK = I.ACTION_BLOCK_COST + 7, FIT = 10;
+  const tick = () => { scripts.beginUpdate(); root.tick(); scripts.run(); };
+  const stops = () => reported.filter((f) => f === 'avm1:budget').length;
+  const cachedCost = () => [...scripts.cache.values()]
+    .reduce((sum, code) => sum + I.ACTION_BLOCK_COST + [...code.records.values()].reduce((s, a) => s + a.end - a.offset, 0), 0);
+  assert.strictEqual(scripts.decoded.used, PER_BLOCK, 'frame 1');
+  assert.ok(scripts.decoded.max >= 1024 * 1024, 'the default allows megabytes of bytecode');
+
+  // FIT blocks fit; the next one decodes its Push past the threshold, then stops at its Pop.
+  scripts.decoded.max = FIT * PER_BLOCK + 1;
+  const crossed = FIT * PER_BLOCK + I.ACTION_BLOCK_COST + 6;
+  for (let i = 1; i <= FRAMES; i++) tick();
+  assert.strictEqual(root.frame, FRAMES + 1);
+  assert.strictEqual(scripts.decoded.used, crossed);
+  assert.strictEqual(cachedCost(), crossed, 'the budget counts exactly what the cache holds');
+  assert.strictEqual(scripts.cache.size, FIT + 1, 'blocks that decoded nothing, and the empty block, are not kept');
+  assert.strictEqual(stops(), FRAMES - FIT, 'the block that crossed the threshold and every later one stopped');
+
+  // Second loop: the cached blocks run again; the others stop again; nothing new is decoded or kept.
+  for (let frame = 1; frame <= FRAMES; frame++) {
+    const before = stops();
+    tick();
+    assert.strictEqual(root.frame, frame);
+    assert.strictEqual(stops() - before, frame <= FIT ? 0 : 1, 'frame ' + frame);
+  }
+  assert.strictEqual(scripts.decoded.used, crossed);
+  assert.strictEqual(scripts.cache.size, FIT + 1);
 });
 
 test('limits: the player passes its limits to the movie', async () => {

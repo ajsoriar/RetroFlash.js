@@ -178,11 +178,13 @@
        does not hold the operands), INVALID_BRANCH (a Jump/If target outside the block) or INVALID_RANGE (a
        function, With or Try body that runs past the block).
      Code 0 is ActionEndFlag. Unknown codes are decoded by their length, as Flash Player skips them. */
+  var NO_DATA = new Uint8Array(0); // shared by the records without a payload, so cached records stay small
+
   function decodeAction(bytes, offset, version) {
     var code = bytes[offset], info = ACTIONS[code], length = bytes.length;
     var action = {
       code: code, name: code === 0 ? 'End' : info ? info[0] : 'Unknown_0x' + code.toString(16), since: info ? info[1] : null,
-      offset: offset, end: offset + 1, data: bytes.subarray(offset + 1, offset + 1), args: undefined, error: undefined
+      offset: offset, end: offset + 1, data: NO_DATA, args: undefined, error: undefined
     };
     if (code < 0x80) return action;
     if (offset + 3 > length) {
@@ -211,11 +213,16 @@
      button's action list. Records are decoded on demand at any offset and cached, so a branch into the middle
      of a record (which some tools emit) decodes from there. list() is the linear decoding from offset 0 up to
      ActionEndFlag: the records before it, with `endFound`, `endOffset`, `trailingBytes` (bytes after the
-     end flag) and `truncated` (a record runs past the block; it is not listed). */
-  function ActionCode(bytes, version) {
+     end flag) and `truncated` (a record runs past the block; it is not listed).
+     `budget` ({ used, max }, optional) can be shared by the blocks of a movie. It is counted in bytes of
+     bytecode, which is what the memory of the cached records follows (see recordCost). Once `used` reaches
+     `max`, decoding a new record throws DECODE_BUDGET; the record that crosses `max` is kept, so `used` may end
+     above it by one record. Records already decoded stay available. */
+  function ActionCode(bytes, version, budget) {
     this.bytes = bytes;
     this.version = version;
     this.length = bytes.length;
+    this.budget = budget || null;
     this.records = new Map();
     this.linear = null;
   }
@@ -223,13 +230,27 @@
     if (!Number.isInteger(offset) || offset < 0 || offset >= this.length) {
       throw decodeError('INVALID_OFFSET', 'Action offset ' + offset + ' is outside the action block');
     }
-    var action = this.records.get(offset);
+    var action = this.records.get(offset), budget = this.budget;
     if (!action) {
+      if (budget && budget.used >= budget.max) {
+        throw decodeError('DECODE_BUDGET', 'More than ' + budget.max + ' bytes of actions decoded');
+      }
       action = decodeAction(this.bytes, offset, this.version);
+      if (budget) budget.used += recordCost(action) + (this.records.size ? 0 : BLOCK_COST);
       this.records.set(offset, action);
     }
     return action;
   };
+
+  /* Budget cost of a cached record: its length, since its memory grows with its operands. A record with an
+     error keeps no operands, so it costs at most its 3-byte header, whatever length it declares. The first
+     record of a block also pays BLOCK_COST for the block's own objects (this ActionCode, its map, its byte
+     view and the caller's cache entry: about 350 bytes of memory, as much as 4 bytes of one-byte actions). */
+  var BLOCK_COST = 4;
+  function recordCost(action) {
+    var length = action.end - action.offset;
+    return action.error ? Math.min(length, 3) : length;
+  }
   ActionCode.prototype.list = function () {
     if (this.linear) return this.linear;
     var list = [], offset = 0;
@@ -248,5 +269,7 @@
     return list;
   };
 
-  Object.assign(M, { ACTIONS: ACTIONS, ACTION_NAMES: ACTION_NAMES, decodeAction: decodeAction, ActionCode: ActionCode });
+  Object.assign(M, {
+    ACTIONS: ACTIONS, ACTION_NAMES: ACTION_NAMES, decodeAction: decodeAction, ActionCode: ActionCode, ACTION_BLOCK_COST: BLOCK_COST
+  });
 })(typeof window !== 'undefined' ? window : globalThis);

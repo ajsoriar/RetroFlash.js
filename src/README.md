@@ -155,6 +155,7 @@ Budgets against hostile or runaway files. Each limit is a Player option with the
 | `maxTotalBitmapPixels` | 4 × 4096 × 4096 | Pixels of all bitmaps of a movie together | `render:bitmapDecodeFailed` (`BITMAP_BUDGET`) |
 | `maxActionBlocks` | 10,000 | AVM1 action blocks (each `DoAction` or button action list) run in one tick or input event; the rest are dropped | `avm1:budget` |
 | `maxActionSteps` | 100,000 | AVM1 actions executed in one tick or input event; the current block stops | `avm1:budget` |
+| `maxActionStack` | 100,000 | Values on the stack of one AVM1 action block; the block stops | `avm1:budget` |
 
 ### Source layout
 
@@ -270,7 +271,8 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
 - `GotoFrame`;
 - `GotoLabel`, matched case-insensitively if no exact match exists;
 - `SetTarget`, with slash paths (`/a/b`, `../a`) and dot paths (`_root.a`, `_parent`, `this`). Instance names are case-insensitive before SWF 7;
-- `WaitForFrame`: every frame counts as loaded.
+- `WaitForFrame`: every frame counts as loaded;
+- the stack core: `Push`, `Pop`, `PushDuplicate`, `StackSwap`, `StoreRegister`, and `ConstantPool` (see [Stack and registers](#stack-and-registers)).
 
 **Ignored, but reported:**
 
@@ -280,22 +282,55 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
 
 **Everything else** is reported as `avm1:<ActionName>`:
 
-- Actions with no timeline effect (`Push`, `SetVariable`, and so on) are skipped.
+- Other actions (`SetVariable`, `GetVariable`, `Add`, and so on) are skipped. The values they would push are unknown.
 - Control flow and calls (`Jump`, `If`, `Call`, `CallFunction`, `CallMethod`, `GotoFrame2`, `SetTarget2`, `With`, `Try`, `Throw`, `Return`, `WaitForFrame2`) **end the script**, because their outcome is unknown without the full VM. AS2 code such as `_root.gotoAndPlay(3)` or `if (…) stop();` is therefore not followed yet.
 
 **Malformed actions:**
 
-- A record that runs past its block is reported as `avm1:malformedAction`, and the script stops there.
-- An executed action whose operands are malformed ends the script with the same report. This applies to `GotoFrame`, `GotoLabel`, `SetTarget`, and function definitions whose body runs past the block.
+- A record that runs past its block is reported as `avm1:malformedAction` when the script reaches it, and the script stops there. Records are decoded only as the script reaches them, after the step is charged to `maxActionSteps`, so a large block costs no more than the actions that run.
+- An executed action whose operands are malformed ends the script with the same report. This applies to `GotoFrame`, `GotoLabel`, `SetTarget`, `Push`, `StoreRegister`, `ConstantPool`, and function definitions whose body runs past the block.
 - Other actions keep the behaviour listed above, even when their operands are malformed.
 
-**Limits:** by default, 10,000 action blocks and 100,000 actions per tick or input event (`maxActionBlocks`, `maxActionSteps`; see [Limits](#limits)).
+**Limits:** by default, 10,000 action blocks and 100,000 actions per tick or input event, and 100,000 values on the stack of one block (`maxActionBlocks`, `maxActionSteps`, `maxActionStack`; see [Limits](#limits)).
+
+**Decoding budget:** decoded records stay cached for the life of the movie, so a block that runs again is not decoded again. The blocks of a movie share a budget of 1 MiB of bytecode. This is an internal limit, not a Player option.
+
+- **What counts:**
+  - each decoded record counts its length once, however often it runs;
+  - a record with an error keeps no operands, so it counts at most its 3-byte header, whatever length it declares;
+  - each cached block also counts 4 bytes for its own objects (about 350 bytes of memory).
+- **Threshold:** the budget is a threshold, not a strict maximum. A record is decoded while the count is below 1 MiB, so the record that crosses it is kept and the count can end above 1 MiB by one record (at most 64 KiB).
+- **Once the budget is spent:** a script that reaches a record not decoded yet stops there, with `avm1:budget`. Records already decoded keep running. A block that decoded no record, because it is empty or was met after the budget was spent, is not kept in the cache.
+- **Measured memory:** filling the budget grew the heap by 40 to 58 MB in headless Chrome. That covers one 4 MiB block of one-byte actions, 400,000 blocks of one action, and 400,000 blocks with a truncated record. In Node 16 and 22 it grew by up to about 120 MB. This bounds the action cache only, not the player's total memory: bitmaps have their own budget.
+- **Restarts:** `stop` and every restart start a new cache with a new budget.
+
+#### Stack and registers
+
+Each block runs in its own `Activation`. It holds the program counter, the clip the block belongs to, the `SetTarget` target, and its own stack, four registers, and constant pool, all empty at the start. The full VM will add the scope chain there.
+
+- **Values** are `undefined`, `null`, booleans, numbers, and strings. Objects come with the full VM.
+- **`Push`** puts its values on the stack in order. A register or constant pool index that does not exist pushes `undefined`.
+- **`StoreRegister`** copies the top of the stack without popping it. Only registers 0–3 exist outside `DefineFunction2`, so a store to any other register is ignored.
+- **`ConstantPool`** replaces the block's pool.
+- **Underflow:** popping an empty stack gives `undefined`, as in Flash Player.
+- **Overflow:** the stack never holds more than `maxActionStack` values. The action that would push past the limit, even halfway through a `Push`, ends the script with `avm1:budget`, and the stack is released.
+- **Skipped actions** keep the stack in step:
+  - an action with a fixed count pops its operands and pushes an *unknown value* (`UNKNOWN_VALUE`) for each result;
+  - a function literal (`DefineFunction` with no name) pushes an unknown value;
+  - an action whose count depends on the values (`InitArray`, `NewObject`, `Enumerate`, and so on) leaves the whole stack unknown, and every later pop past the known values gives an unknown value;
+  - an unknown action code has no effect, as in Flash Player.
+
+  An unknown value never reaches the timeline, so a value that was never computed cannot steer the movie. No action that the player executes reads the stack yet.
 
 #### Decoder
 
 `ActionCode` (`avm1/decoder.js`) decodes an action block without running it. It is written against the "Actions" chapter of SWF19.
 
 - **Decoding on demand:** `at(offset)` decodes the record at any offset and caches it. A branch into the middle of a record, as some tools emit, therefore decodes from that point.
+- **Budget:** an optional `{ used, max }` object can be shared by several `ActionCode`s.
+  - Each newly decoded record adds its cost to `used`: its length, or at most 3 for a record with an error.
+  - A block's first record adds `ACTION_BLOCK_COST` (4) more.
+  - Once `used` reaches `max`, decoding a new record throws `DECODE_BUDGET`. Records already decoded stay available.
 - **Linear list:** `list()` decodes from offset 0 up to `ActionEndFlag`. It also gives `endFound`, `endOffset`, `trailingBytes`, and `truncated`.
 - **Records:** each one is `{ code, name, since, offset, end, data, args, error }`:
   - `since` is the SWF version that introduced the action;
@@ -314,8 +349,6 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
   - Strings are Latin-1 before SWF 6 and UTF-8 from SWF 6.
   - A double is stored as two little-endian 32-bit words, the high word first. Push integers are signed.
   - Bytes after the operands are ignored, and unknown codes are skipped by their length, as in Flash Player.
-
-Each block runs in its own `Activation`: the program counter, the clip the block belongs to, and the `SetTarget` target. The full VM will add the stack, registers, and scope chain there.
 
 **Instance safety:** the player resists files whose sprites or buttons contain themselves.
 

@@ -154,6 +154,39 @@ test('decoder: each offset is decoded once; decoding leaves the bytes untouched'
   assert.deepStrictEqual(bytes, copy);
 });
 
+test('decoder: a shared budget counts the bytes of each record decoded once, across blocks', () => {
+  const BLOCK = I.ACTION_BLOCK_COST, budget = { used: 0, max: 2 * BLOCK + 12 };
+  const a = new I.ActionCode(Uint8Array.from([0x07, ...rec(0x81, 1, 0), 0x06]), 6, budget);
+  const b = new I.ActionCode(Uint8Array.from([...rec(0x96, 0, ...str('x')), 0x07]), 6, budget);
+  a.at(0); a.at(1); a.at(1);
+  assert.strictEqual(budget.used, BLOCK + 6, 'the block, Stop (1) and GotoFrame (5); a cached record is free');
+  b.at(0);
+  assert.strictEqual(budget.used, 2 * BLOCK + 12, 'another block and its Push (6)');
+  assert.throws(() => a.at(6), (err) => err.code === 'DECODE_BUDGET', 'the budget is spent');
+  assert.strictEqual(a.at(1).name, 'GotoFrame', 'decoded records stay available');
+  assert.strictEqual(budget.used, 2 * BLOCK + 12);
+  assert.strictEqual(new I.ActionCode(Uint8Array.from([0x07]), 6).budget, null, 'no budget by default');
+});
+
+test('decoder: a record that crosses the budget is kept; records with errors cost at most their header', () => {
+  const crossing = { used: 0, max: I.ACTION_BLOCK_COST + 2 }; // room for the block and the Stop, not the Push
+  const code = new I.ActionCode(Uint8Array.from([0x07, ...rec(0x96, 0, ...str('long string')), 0x07]), 6, crossing);
+  code.at(0); code.at(1);
+  assert.strictEqual(crossing.used, I.ACTION_BLOCK_COST + 1 + 16, 'the Push crossed the threshold by its length');
+  assert.throws(() => code.at(17), (err) => err.code === 'DECODE_BUDGET');
+
+  const budget = { used: 0, max: 1e6 };
+  const cut = new I.ActionCode(Uint8Array.from([0x96, 0xff, 0xff, ...Array(5000).fill(2)]), 6, budget); // declares 65535 bytes
+  assert.strictEqual(cut.at(0).error.code, 'TRUNCATED_RECORD');
+  assert.strictEqual(budget.used, I.ACTION_BLOCK_COST + 3, 'not the 5003 bytes up to the end of the block');
+  const bad = new I.ActionCode(Uint8Array.from(rec(0x96, 10, ...Array(1000).fill(0))), 6, budget);
+  assert.strictEqual(bad.at(0).error.code, 'INVALID_OPERANDS');
+  assert.strictEqual(budget.used, 2 * (I.ACTION_BLOCK_COST + 3));
+  const header = new I.ActionCode(Uint8Array.from([0x96, 1]), 6, budget);
+  assert.strictEqual(header.at(0).error.code, 'TRUNCATED_RECORD');
+  assert.strictEqual(budget.used, 3 * I.ACTION_BLOCK_COST + 8, 'a cut header costs its 2 bytes');
+});
+
 // ---- Interpreter on malformed records --------------------------------------------------------------------------
 
 async function runActions(...records) {
@@ -176,8 +209,8 @@ test('AVM1: an executed action with malformed operands ends the script', async (
 });
 
 test('AVM1: a malformed action outside the subset is reported and skipped, as before', async () => {
-  const { root, reported } = await runActions(rec(0x96, 10), B.A.stop());
-  assert.ok(reported.includes('avm1:Push'));
+  const { root, reported } = await runActions(rec(0x9a), B.A.stop()); // GetURL2 without its flags
+  assert.ok(reported.includes('avm1:GetURL2'));
   assert.ok(!reported.includes('avm1:malformedAction'));
   assert.strictEqual(root.playing, false);
 });

@@ -13,8 +13,8 @@ node tests/inspect.js some.swf --tags    # inspect any SWF from the command line
 
 | Environment | `DecompressionStream` | Result (2026-10-27) |
 |---|---|---|
-| Node 16.15.0 (Windows) | test-only zlib polyfill (`tests/support/load-reader.js`) | 142 passed, 0 failed (sources and `dist` bundle) |
-| Node 22.13.0 (Windows) | native | 142 passed, 0 failed (sources and `dist` bundle) |
+| Node 16.15.0 (Windows) | test-only zlib polyfill (`tests/support/load-reader.js`) | 157 passed, 0 failed (sources and `dist` bundle) |
+| Node 22.13.0 (Windows) | native | 157 passed, 0 failed (sources and `dist` bundle) |
 | Chrome (headless, Windows) | native | Manual run of `demo/player.html`; see “Rendering” below. Not automated |
 
 The runtime does not ship the polyfill. In Node, it lets the reader's real streaming code run where the global is missing.
@@ -94,8 +94,13 @@ These are covered in `unit/*.test.js`:
   - image header sizes (JPEG `SOF0`/`SOF2` after `APP0`, PNG, GIF; scan before frame header, missing marker);
   - per-bitmap and per-movie pixel budgets, and a JPEG declaring 30000×30000 refused before decoding;
   - two overlapping `load()` calls where the older one finishes last; a load superseded while decoding a bitmap, whose decoding failure must not reach the newer movie's diagnostics; and a failed load after `destroy()` (headless canvas stand-in);
-  - player limits: defaults, overrides, invalid values (`INVALID_OPTION`), and `maxNesting`, `maxInstances`, `maxActionBlocks`, and `maxActionSteps` each cutting a movie built for it;
-  - one action budget per tick, shared by the frame scripts and the roll-over of a button that appears under the pointer, and a new budget for the next input event.
+  - player limits: defaults, overrides, invalid values (`INVALID_OPTION`), and `maxNesting`, `maxInstances`, `maxActionBlocks`, and `maxActionSteps` each cutting a movie built for it (`maxActionStack`: see the stack core below);
+  - one action budget per tick, shared by the frame scripts and the roll-over of a button that appears under the pointer, and a new budget for the next input event;
+  - the decoding budget across 30 blocks and an empty one, with a lowered budget:
+    - the first 10 blocks run; the 11th crosses the threshold with its `Push` and stops at its `Pop`; every later block stops;
+    - the cost counted matches what the cache holds (records plus the block cost);
+    - blocks that decoded nothing, and the empty block, are not cached;
+    - on the second loop, the cached blocks run again, and nothing new is decoded or cached.
 - **AVM1 decoder** (`avm1-decoder.test.js`, byte layouts worked out by hand from the specification):
   - record boundaries up to `ActionEndFlag`, and the bytes after it;
   - the operands of every action that has them:
@@ -106,7 +111,19 @@ These are covered in `unit/*.test.js`:
   - strings decoded as Latin-1 before SWF 6 and as UTF-8 from SWF 6;
   - the SWF version that introduced each action, and unknown codes;
   - errors: `TRUNCATED_RECORD`, `INVALID_OPERANDS`, `INVALID_RANGE`, and offsets outside the block;
+  - a budget shared by two blocks: each record counted once, by its length, plus the block cost; `DECODE_BUDGET` once it is spent, with the decoded records still available;
+  - the threshold: the record that crosses it is kept, and the next one is refused. Records with errors (a `Push` that declares 65,535 bytes in a shorter block, an unknown `Push` type, a cut header) cost at most their header;
   - in the interpreter: a malformed `GotoFrame` or function body ends the script, while a malformed action outside the subset is still reported and skipped.
+- **AVM1 stack core** (`avm1-stack.test.js`, one action block per test, stack and registers checked after it runs):
+  - `Push` of every value type, in order; `Pop`, `PushDuplicate`, and `StackSwap`;
+  - underflow giving `undefined`, including a `StackSwap` with one value;
+  - `StoreRegister` copying the top without popping it, on an empty stack, and to registers past 3 (ignored); `Push` of registers 0–3 and of missing ones;
+  - the constant pool read by 8- and 16-bit index, replaced by a later pool, read before any pool, and past its end;
+  - skipped actions with fixed counts (`Add`, `GetVariable`, `SetVariable`, `SetProperty`) leaving unknown values; `InitArray` leaving the whole stack unknown; unknown action codes without effect; function literals;
+  - a malformed `Push` (unknown type, truncated double), `StoreRegister`, or `ConstantPool` ending the script;
+  - `maxActionStack`, checked on every push: a `Push` of five values with a limit of 2 never holds a third, and neither do `PushDuplicate`, `StackSwap` on an empty stack, skipped actions, or function literals;
+  - lazy decoding: with `maxActionSteps` 10, a block of 5,000 actions decodes at most 10 records and is never listed; a truncated record is reported when the script reaches it, and not when an earlier action ends the script;
+  - the stack-effect table listing only actions that are skipped.
 - **Text** (`text.test.js`, SWFs built in memory):
   - a DefineFont whose codes, name, and style come from DefineFontInfo;
   - a DefineText without its end byte (`TEXT_END_MISSING`), and a DefineFont2 glyph offset past the tag (`INVALID_OFFSET`, tag invalid);

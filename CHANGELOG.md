@@ -22,8 +22,20 @@
     - a `GotoFrame` whose operand is shorter than 2 bytes, which used to jump to an undefined frame;
     - a function definition whose body runs past the block, which used to skip silently to the end.
 
+- **Action blocks are decoded lazily.** A record is decoded only when the script reaches it, after its step is charged to `maxActionSteps`. Before, every block was first decoded in full, so a large `DoAction` cost time and memory before any limit applied. As a result, a record that runs past its block is reported only when the script reaches it.
+- **Decoded actions have a budget per movie.** It is an internal threshold of 1 MiB of bytecode, shared by every block.
+  - **Costs:** each cached record counts its length once. A record with an error counts at most its 3-byte header, so a truncated record cannot use up the budget. Each cached block counts 4 bytes for its own objects.
+  - **Past the threshold:** a script that needs a new record stops with `avm1:budget`, and cached blocks keep running. Blocks that decoded nothing are not cached.
+  - **Memory:** filling the budget grew the heap by 40 to 58 MB in headless Chrome and by up to about 120 MB in Node.
+  - **Smaller records:** records without a payload share one empty `data` view, which more than halves the memory of one-byte actions.
+- **Push is interpreted, so a malformed `Push` now ends the script** (`avm1:malformedAction`), as a malformed `StoreRegister` or `ConstantPool` does. `Push`, `Pop`, `PushDuplicate`, `StackSwap`, `StoreRegister`, and `ConstantPool` are no longer reported as unsupported.
+
 ### Added
 
+- **AVM1 stack core.** Each action block has its own stack, four registers, and constant pool. `Push` (every value type, registers, and constants), `Pop`, `PushDuplicate`, `StackSwap`, `StoreRegister`, and `ConstantPool` are executed. Popping an empty stack gives `undefined`.
+  - Skipped actions keep the stack in step: they pop their operands and push unknown values (`UNKNOWN_VALUE`), so no later action takes their results for real values. An action whose counts depend on the values leaves the whole stack unknown.
+  - New limit `maxActionStack` (default 100,000 values per block). It is checked on every push, so even a single `Push` stops at the limit.
+  - **Tests:** `tests/unit/avm1-stack.test.js`.
 - **AVM1 decoder** (`ActionCode` in `src/avm1/decoder.js`), written against SWF19. It decodes action records and their operands without executing them.
   - **Operands:** `Push` values of every type, the constant pool, registers, function definitions (with their `DefineFunction2` flags), `With` and `Try` bodies, `GetURL`/`GetURL2`, `GotoFrame2`, and `WaitForFrame`/`WaitForFrame2`.
   - **Branches:** targets are measured from the next record and checked against the block.

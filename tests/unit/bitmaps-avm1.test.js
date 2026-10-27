@@ -98,7 +98,8 @@ test('AVM1: gotoLabel + play, setTarget + gotoFrame on a named instance, stop', 
   assert.strictEqual(root.playing, false, 'stop() in frame 5');
   assert.strictEqual(spinner().frame, 7, 'spinner sent to frame 7 through setTarget');
   assert.strictEqual(spinner().playing, true);
-  for (const f of ['avm1:Push', 'avm1:SetVariable', 'avm1:GetURL']) assert.ok(reported.includes(f), f + ' reported');
+  for (const f of ['avm1:SetVariable', 'avm1:GetURL']) assert.ok(reported.includes(f), f + ' reported');
+  assert.ok(!reported.includes('avm1:Push'), 'Push is interpreted');
 });
 
 test('AVM1: sprite frame scripts stop their own timeline; a stopped parent keeps children playing', async () => {

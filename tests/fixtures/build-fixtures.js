@@ -10,6 +10,7 @@ const { buildAnimation } = require('./animation');
 const { buildBitmaps } = require('./bitmaps');
 const { buildActions } = require('./actions');
 const { buildButtons } = require('./buttons');
+const { buildText } = require('./text');
 
 const fileAttributes = (raw = 0) => tag(T.FileAttributes, body((w) => w.u32(raw)));
 const background = (r, g, b) => tag(T.SetBackgroundColor, body((w) => w.rgb({ r, g, b })));
@@ -183,6 +184,18 @@ const fixtures = [
     expect: {
       signature: 'FWS', version: 6, width: 320, height: 200, fps: 12, frameCount: 2, actualFrameCount: 2, tags: 23,
       diagnostics: [], unsupported: ['actionscript:DoAction']
+    }
+  },
+  {
+    file: 'valid/fws-text.swf',
+    description: 'Text fixture (tests/fixtures/text.js): DefineFont2 and DefineFont3 with project-drawn glyphs and layout, ' +
+      'device fonts (DefineFont2 without glyphs, with and without CodeTableOffset), DefineText and DefineText2, and ' +
+      'DefineEditText fields: device font centered, embedded font with word wrap, HTML, border with AutoSize, and a ' +
+      'password input field bound to a variable.',
+    build: buildText,
+    expect: {
+      signature: 'FWS', version: 10, width: 400, height: 300, fps: 12, frameCount: 1, actualFrameCount: 1, tags: 22,
+      diagnostics: [], unsupported: []
     }
   },
   // ---- loads with diagnostics --------------------------------------------------------------------------

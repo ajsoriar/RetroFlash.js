@@ -15,13 +15,14 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;b
 </style>
 </head>
 <body>
-<h1>RetroFlash.js <small>Player · v0.3</small></h1>
+<h1>RetroFlash.js <small>Player · v0.4</small></h1>
 <p>Plays the vector part of a SWF on Canvas 2D: <code>DefineShape</code> 1–4 (solid fills, linear/radial gradients, lines), the display list,
 the root and <code>DefineSprite</code> timelines, <code>clipDepth</code> masks, and bitmaps: JPEG, PNG, GIF, JPEG with alpha, and lossless.
+Static text uses the movie's embedded glyphs. Text fields use embedded or device fonts, with word wrap, alignment and an HTML subset.
 Frame scripts run through a controlled AVM1 subset (stop, play, goto, setTarget); AS2 control flow and calls are not followed yet.
 Buttons respond to the mouse (hover, press, release) and to the keyboard once the canvas has focus.
-Text, sound and morph shapes are not drawn yet; they are listed below.
-Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code> or <code>fws-buttons.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
+Sound, morph shapes and text input are not supported yet; what a movie uses is listed below.
+Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code>, <code>fws-buttons.swf</code> or <code>fws-text.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>
 <input id="file" type="file" accept=".swf,application/x-shockwave-flash">
 <p id="status">No movie loaded.</p>
@@ -55,6 +56,7 @@ Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</
     $('status').textContent='Loading '+file.name+'…';setEnabled(false);
     try{
       var info=await player.load(file);
+      if(!info)return; // superseded by a newer file
       $('status').textContent=file.name+' — SWF '+info.version+' · '+info.width+'×'+info.height+' px · '+info.fps+' fps · '+info.frameCount+' frames';
       $('seek').max=info.frameCount;setEnabled(true);showFrame();showUnsupported();
       player.play();

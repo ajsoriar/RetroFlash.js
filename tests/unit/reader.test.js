@@ -13,7 +13,7 @@ test('public API: frozen SWFReader with load, BitReader, version and tag names',
   assert.ok(Object.isFrozen(SWFReader));
   assert.strictEqual(typeof SWFReader.load, 'function');
   assert.strictEqual(typeof SWFReader.BitReader, 'function');
-  assert.strictEqual(SWFReader.version, '0.4.0');
+  assert.strictEqual(SWFReader.version, '0.5.0');
   assert.strictEqual(SWFReader.tagNames[39], 'DefineSprite');
   assert.deepStrictEqual({ ...SWFReader.defaultOptions }, { maxFileBytes: 52428800, maxTags: 500000, maxSpriteDepth: 4, strict: false });
 });

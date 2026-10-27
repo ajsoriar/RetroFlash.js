@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
 
-  var VERSION = '0.4.0';
+  var VERSION = '0.5.0';
 
   var TAG_NAMES = {
     0:'End', 1:'ShowFrame', 2:'DefineShape', 4:'PlaceObject', 5:'RemoveObject',
@@ -135,6 +135,18 @@
     var at = this.bitPos / 8;
     this.bitPos += 16;
     return this.bytes[at] | (this.bytes[at + 1] << 8);
+  };
+  BitReader.prototype.readSI16 = function (what) {
+    var value = this.readUI16(what || 'SI16');
+    return value >= 0x8000 ? value - 0x10000 : value;
+  };
+  // Moves to an absolute byte offset inside [start, end] (offset tables).
+  BitReader.prototype.seek = function (byteOffset, what) {
+    if (!Number.isInteger(byteOffset) || byteOffset < this.start || byteOffset > this.end) {
+      fail('INVALID_OFFSET', (what || 'Offset') + ' points to byte ' + byteOffset + ', outside [' + this.start + ', ' + this.end + ']', this.byteOffset());
+    }
+    this.bitPos = byteOffset * 8;
+    return this;
   };
   BitReader.prototype.readUI32 = function (what) {
     this.align(); this.need(32, what || 'UI32');
@@ -486,6 +498,171 @@
     };
   }
 
+  /* Fonts. Each glyph is a SHAPE without style arrays: NumFillBits/NumLineBits, then SHAPERECORDs whose fill
+     style 1 is the text colour. Coordinates are on an EM square of 1024 units (DefineFont3: 20480).
+     Glyphs are { records, code, advance[, bounds] }; codes come from the font's code table (DefineFont2/3) or
+     from DefineFontInfo (DefineFont). */
+  function readGlyphShape(r) {
+    var bits = r.readUI8('SHAPE.NumBits');
+    return readShapeRecords(r, 1, bits >> 4, bits & 15);
+  }
+  // FontNameLen UI8 + bytes. Files often include a terminating NUL in the length; it is dropped.
+  function readFontName(r, version, label) {
+    var length = r.readUI8(label + '.FontNameLen'), at = r.byteOffset(), end = at + length;
+    r.need(length * 8, label + '.FontName');
+    r.bitPos = end * 8;
+    while (end > at && r.bytes[end - 1] === 0) end--;
+    return decodeString(r.bytes.subarray(at, end), version);
+  }
+  function glyphAt(r, tableAt, offset, label) {
+    return readGlyphShape(new BitReader(r.bytes, r.start, r.end).seek(tableAt + offset, label + '.OffsetTable'));
+  }
+  function defineFontDecoder(r) {
+    var f = { fontId: r.readUI16('DefineFont.FontId'), fontVersion: 1, name: '', bold: false, italic: false, glyphs: [] };
+    if (r.remainingBytes() === 0) return f;
+    // The glyph count is implied by the first offset: the offset table is NumGlyphs UI16 entries.
+    var tableAt = r.byteOffset(), first = r.readUI16('DefineFont.OffsetTable'), offsets = [first], i;
+    if (first < 2) fail('INVALID_VALUE', 'DefineFont.OffsetTable starts with ' + first + ', which implies no glyphs', tableAt);
+    for (i = 1; i < first >> 1; i++) offsets.push(r.readUI16('DefineFont.OffsetTable'));
+    // Character codes come from a later DefineFontInfo.
+    for (i = 0; i < offsets.length; i++) f.glyphs.push({ records: glyphAt(r, tableAt, offsets[i], 'DefineFont'), code: null, advance: 0 });
+    r.skipRemaining();
+    return f;
+  }
+  function fontDecoder(fontVersion) {
+    var label = 'DefineFont' + fontVersion;
+    return function (r, ctx) {
+      var f = { fontId: r.readUI16(label + '.FontId'), fontVersion: fontVersion }, i;
+      var flags = r.readUI8(label + '.Flags'), wideOffsets = !!(flags & 0x08), wideCodes = !!(flags & 0x04);
+      f.hasLayout = !!(flags & 0x80);
+      f.shiftJIS = !!(flags & 0x40);
+      f.smallText = !!(flags & 0x20);
+      f.ansi = !!(flags & 0x10);
+      f.italic = !!(flags & 0x02);
+      f.bold = !!(flags & 0x01);
+      f.language = r.readUI8(label + '.LanguageCode');
+      f.name = readFontName(r, ctx.version, label);
+      var count = r.readUI16(label + '.NumGlyphs'), tableAt = r.byteOffset(), offsets = [];
+      var readOffset = function () { return wideOffsets ? r.readUI32(label + '.OffsetTable') : r.readUI16(label + '.OffsetTable'); };
+      f.glyphs = [];
+      if (count === 0) {
+        // A font without glyphs (device font): CodeTableOffset is written by some tools and omitted by others.
+        if (r.remainingBytes() >= (wideOffsets ? 4 : 2)) readOffset();
+      } else {
+        for (i = 0; i < count; i++) offsets.push(readOffset());
+        var codeTableOffset = readOffset();
+        for (i = 0; i < count; i++) f.glyphs.push({ records: glyphAt(r, tableAt, offsets[i], label), code: 0, advance: 0 });
+        r.seek(tableAt + codeTableOffset, label + '.CodeTableOffset');
+        for (i = 0; i < count; i++) f.glyphs[i].code = wideCodes ? r.readUI16(label + '.CodeTable') : r.readUI8(label + '.CodeTable');
+      }
+      if (f.hasLayout) {
+        f.ascent = r.readUI16(label + '.FontAscent');
+        f.descent = r.readUI16(label + '.FontDescent');
+        f.leading = r.readSI16(label + '.FontLeading');
+        for (i = 0; i < count; i++) f.glyphs[i].advance = r.readSI16(label + '.FontAdvanceTable');
+        // Older files end the tag after the advances; the bounds and kerning tables are then absent.
+        if (r.remainingBytes() > 0) for (i = 0; i < count; i++) f.glyphs[i].bounds = r.readRect();
+        f.kerning = [];
+        if (r.remainingBytes() > 0) {
+          var pairs = r.readUI16(label + '.KerningCount');
+          for (i = 0; i < pairs; i++) {
+            f.kerning.push({
+              left: wideCodes ? r.readUI16('KERNINGRECORD.FontKerningCode1') : r.readUI8('KERNINGRECORD.FontKerningCode1'),
+              right: wideCodes ? r.readUI16('KERNINGRECORD.FontKerningCode2') : r.readUI8('KERNINGRECORD.FontKerningCode2'),
+              adjustment: r.readSI16('KERNINGRECORD.FontKerningAdjustment')
+            });
+          }
+        }
+      }
+      return f;
+    };
+  }
+  // DefineFontInfo/DefineFontInfo2: name, style and code table for a DefineFont.
+  function fontInfoDecoder(infoVersion) {
+    var label = infoVersion === 2 ? 'DefineFontInfo2' : 'DefineFontInfo';
+    return function (r, ctx) {
+      var f = { fontId: r.readUI16(label + '.FontId') };
+      f.name = readFontName(r, ctx.version, label);
+      var flags = r.readUI8(label + '.Flags'), wideCodes = !!(flags & 0x01);
+      f.smallText = !!(flags & 0x20);
+      f.shiftJIS = !!(flags & 0x10);
+      f.ansi = !!(flags & 0x08);
+      f.italic = !!(flags & 0x04);
+      f.bold = !!(flags & 0x02);
+      if (infoVersion === 2) f.language = r.readUI8(label + '.LanguageCode');
+      f.codes = [];
+      while (r.remainingBytes() >= (wideCodes ? 2 : 1)) f.codes.push(wideCodes ? r.readUI16(label + '.CodeTable') : r.readUI8(label + '.CodeTable'));
+      return f;
+    };
+  }
+
+  /* DefineText/DefineText2: static text as glyph runs. TEXTRECORD flags: HasFont 0x08, HasColor 0x04,
+     HasYOffset 0x02, HasXOffset 0x01; a zero byte ends the list. Font, colour, offsets and height carry over
+     to the following records. Colours are {r, g, b, a} (a = 255 in DefineText). */
+  function textDecoder(textVersion) {
+    var label = textVersion === 2 ? 'DefineText2' : 'DefineText';
+    return function (r, ctx, tag) {
+      var f = { characterId: r.readUI16(label + '.CharacterId'), bounds: r.readRect(), matrix: r.readMatrix(), records: [] };
+      var glyphBits = r.readUI8(label + '.GlyphBits'), advanceBits = r.readUI8(label + '.AdvanceBits'), i;
+      for (;;) {
+        if (r.remainingBytes() === 0) {
+          diagnose(ctx, 'warning', 'TEXT_END_MISSING', label + ' at offset ' + tag.offset + ' has no EndOfRecordsFlag', tag);
+          break;
+        }
+        var flags = r.readUI8('TEXTRECORD.Flags');
+        if (flags === 0) break;
+        var rec = {};
+        if (flags & 0x08) rec.fontId = r.readUI16('TEXTRECORD.FontID');
+        if (flags & 0x04) rec.color = readShapeColor(r, textVersion === 2 ? 3 : 1, 'TEXTRECORD.TextColor');
+        if (flags & 0x01) rec.x = r.readSI16('TEXTRECORD.XOffset');
+        if (flags & 0x02) rec.y = r.readSI16('TEXTRECORD.YOffset');
+        if (flags & 0x08) rec.height = r.readUI16('TEXTRECORD.TextHeight');
+        var count = r.readUI8('TEXTRECORD.GlyphCount');
+        rec.glyphs = [];
+        for (i = 0; i < count; i++) {
+          rec.glyphs.push({ index: r.readUB(glyphBits, 'GLYPHENTRY.GlyphIndex'), advance: r.readSB(advanceBits, 'GLYPHENTRY.GlyphAdvance') });
+        }
+        r.align();
+        f.records.push(rec);
+      }
+      return f;
+    };
+  }
+
+  /* DefineEditText: a text field. Flags are two bytes, MSB first: HasText, WordWrap, Multiline, Password,
+     ReadOnly, HasTextColor, HasMaxLength, HasFont, then HasFontClass, AutoSize, HasLayout, NoSelect, Border,
+     WasStatic, HTML, UseOutlines. FontHeight is present with HasFont or HasFontClass; Indent and Leading are
+     signed. Align: 0 left, 1 right, 2 center, 3 justify. Lengths are in twips. */
+  function editTextDecoder(r, ctx) {
+    var L = 'DefineEditText', f = { characterId: r.readUI16(L + '.CharacterId'), bounds: r.readRect() };
+    var a = r.readUI8(L + '.Flags'), b = r.readUI8(L + '.Flags');
+    f.wordWrap = !!(a & 0x40);
+    f.multiline = !!(a & 0x20);
+    f.password = !!(a & 0x10);
+    f.readOnly = !!(a & 0x08);
+    f.autoSize = !!(b & 0x40);
+    f.noSelect = !!(b & 0x10);
+    f.border = !!(b & 0x08);
+    f.wasStatic = !!(b & 0x04);
+    f.html = !!(b & 0x02);
+    f.useOutlines = !!(b & 0x01);
+    if (a & 0x01) f.fontId = r.readUI16(L + '.FontID');
+    if (b & 0x80) f.fontClass = r.readString(ctx.version, L + '.FontClass');
+    if ((a & 0x01) || (b & 0x80)) f.fontHeight = r.readUI16(L + '.FontHeight');
+    if (a & 0x04) f.color = r.readRGBA(L + '.TextColor');
+    if (a & 0x02) f.maxLength = r.readUI16(L + '.MaxLength');
+    if (b & 0x20) {
+      f.align = r.readUI8(L + '.Align');
+      f.leftMargin = r.readUI16(L + '.LeftMargin');
+      f.rightMargin = r.readUI16(L + '.RightMargin');
+      f.indent = r.readSI16(L + '.Indent');
+      f.leading = r.readSI16(L + '.Leading');
+    }
+    f.variableName = r.readString(ctx.version, L + '.VariableName');
+    if (a & 0x80) f.initialText = r.readString(ctx.version, L + '.InitialText');
+    return f;
+  }
+
   // Tag body decoders: (reader, ctx, tag, level, unparsed) -> fields. Push names onto `unparsed` for
   // fields that exist in the tag but are not decoded; the tag is then reported as 'partial'.
   var DECODERS = {
@@ -570,7 +747,25 @@
       while (r.remainingBytes() > 0) f.colorTransforms.push(r.readCxform());
       return f;
     },
-    17: function (r) { var f = { buttonId: r.readUI16('DefineButtonSound.ButtonId') }; r.skipRemaining(); return f; }
+    17: function (r) { var f = { buttonId: r.readUI16('DefineButtonSound.ButtonId') }; r.skipRemaining(); return f; },
+    10: defineFontDecoder,
+    48: fontDecoder(2),
+    75: fontDecoder(3),
+    13: fontInfoDecoder(1),
+    62: fontInfoDecoder(2),
+    88: function (r, ctx) {
+      return { fontId: r.readUI16('DefineFontName.FontId'), name: r.readString(ctx.version, 'DefineFontName.FontName'), copyright: r.readString(ctx.version, 'DefineFontName.FontCopyright') };
+    },
+    // DefineFontAlignZones and CSMTextSettings only tune anti-aliasing; their bodies are kept opaque.
+    73: function (r) { var f = { fontId: r.readUI16('DefineFontAlignZones.FontId'), csmTableHint: r.readUI8('DefineFontAlignZones.CSMTableHint') >> 6 }; r.skipRemaining(); return f; },
+    74: function (r) {
+      var f = { textId: r.readUI16('CSMTextSettings.TextId'), useFlashType: r.readUB(2, 'CSMTextSettings.UseFlashType'), gridFit: r.readUB(3, 'CSMTextSettings.GridFit') };
+      r.skipRemaining();
+      return f;
+    },
+    11: textDecoder(1),
+    33: textDecoder(2),
+    37: editTextDecoder
   };
 
   function diagnose(ctx, level, code, message, tag) {

@@ -183,6 +183,23 @@ test('overlapping loads: the latest call wins even when an older one finishes la
   assert.strictEqual(player.state, 'ready');
 });
 
+test('a load superseded while decoding bitmaps does not report into the newer movie', async () => {
+  const bitmap = B.defineBitsLossless(1, 1, { format: 5, width: 1, height: 1, pixels: [[255, 0, 0]] });
+  const older = B.swf({ version: 6, frameCount: 1, tags: [bitmap, show(), end()] });
+  const newer = B.swf({ version: 6, frameCount: 1, tags: [show(), end()] });
+  const player = headlessPlayer(), real = globalThis.SWFReader;
+  let second = null;
+  // The newer load starts while the older one inflates its bitmap; the older decode then fails (no canvas in Node).
+  globalThis.SWFReader = Object.assign({}, real, {
+    inflate: (...args) => { if (!second) second = player.load(newer); return real.inflate(...args); }
+  });
+  let first;
+  try { first = await player.load(older); } finally { globalThis.SWFReader = real; }
+  assert.strictEqual(first, null);
+  assert.strictEqual((await second).frameCount, 1);
+  assert.deepStrictEqual(player.getDiagnostics().unsupported.map((u) => u.feature), [], 'no render:bitmapDecodeFailed from the older file');
+});
+
 test('a load that fails after destroy() leaves the player destroyed', async () => {
   const player = headlessPlayer();
   const bad = Uint8Array.from([0x46, 0x57, 0x53, 6, 8, 0, 0, 0]);

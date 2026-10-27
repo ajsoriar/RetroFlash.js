@@ -1,5 +1,36 @@
 # Changelog
 
+## RetroFlash 0.4.0 + SWFReader 0.5.0 — 2026-10-27 (text)
+
+### Added
+
+- **Reader 0.5.0:**
+  - `DefineFont`, `DefineFont2`, and `DefineFont3`: glyph outlines, codes, advances, layout, bounds, and kerning;
+  - `DefineFontInfo` and `DefineFontInfo2`, and `DefineFontName`;
+  - `DefineFontAlignZones` and `CSMTextSettings` (ids only);
+  - `DefineText` and `DefineText2`, and `DefineEditText` (all flags and fields);
+  - real-file variations are tolerated: a missing `CodeTableOffset` in fonts without glyphs, missing glyph bounds or kerning tables, and a NUL at the end of font names;
+  - a `DefineText` without its end byte is accepted with a `TEXT_END_MISSING` warning;
+  - `BitReader.readSI16` and `BitReader.seek`.
+- **Static text:** `DefineText`/`DefineText2` are drawn with the font's glyph outlines (1024 or 20480 EM), the text matrix, record offsets and advances, and record colours under colour transforms. Static text also works as a mask.
+- **Text fields** (`DefineEditText`):
+  - fonts: embedded glyphs with `UseOutlines`; otherwise device fonts through Canvas, with `_sans`/`_serif`/`_typewriter` and generic fallbacks, and nothing downloaded;
+  - layout: the 2 px gutter, word wrap, line metrics, leading, margins, indent, alignment (left, right, center, justify), and `AutoSize`;
+  - an HTML subset: `<p align>`, `<br>`, `<font face size color>`, `<b>`, `<i>`, `<u>`, `<a>`, `<li>`, `<textformat>`, and entities. It is parsed in a single linear scan, so hostile markup cannot cause quadratic work, and tags longer than 4,096 characters are dropped;
+  - drawing: border and background, password masking, and clipping to the field;
+  - as in Flash Player, device-font fields are not drawn when rotated, skewed, or mirrored.
+- **Reports:** `text:variable` (fields bound to variables show their initial text), `text:input` (no editing), `text:htmlImage`, `text:deviceFallback`, `text:missingGlyph`, `render:missingFont`, and `render:textMask`.
+- **Hit testing:** text is hit by its bounds, inside button hit areas too.
+- **Tests:** fixture `valid/fws-text.swf` (fonts drawn by the project) and `tests/unit/text.test.js`.
+
+### Changed
+
+- The demo ignores a load that a newer file has superseded.
+
+### Fixed
+
+- A load superseded while its bitmaps were decoding could still report bitmap failures into the newer movie's diagnostics. Its reports are now dropped once it is superseded.
+
 ## RetroFlash 0.3.0 + SWFReader 0.4.0 — 2026-10-27 (buttons)
 
 ### Added

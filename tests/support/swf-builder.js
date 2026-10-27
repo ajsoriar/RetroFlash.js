@@ -322,6 +322,95 @@ function defineButton(id, records, actionRecords) {
 // cxforms: [{ mult: [r, g, b], add: [r, g, b] }] applied to the button's records in order.
 const defineButtonCxform = (id, cxforms) => tag(23, body((w) => { w.u16(id); cxforms.forEach((c) => cxform(w, c, false)); }));
 
+/* Fonts and text. A glyph is { code, records, advance, bounds? } where records use the defineShape record
+   format with fill style 1 only (coordinates on the EM square, baseline at y = 0).
+   font = { name, bold?, italic?, glyphs, layout?: { ascent, descent, leading }, kerning?: [[left, right, adj]],
+            wideOffsets?, wideCodes? (default true), nameNul?, noBounds?, noCodeTableOffset? } */
+function glyphShape(records) {
+  return body((w) => { w.ub(4, 1).ub(4, 0); shapeRecords(w, records, { fill: 1, line: 0 }); });
+}
+function defineFont2(id, font, fontVersion = 2) {
+  return tag(fontVersion === 3 ? 75 : 48, body((w) => {
+    const wideOffsets = !!font.wideOffsets, wideCodes = font.wideCodes !== false, n = font.glyphs.length;
+    const offset = (v) => (wideOffsets ? w.u32(v) : w.u16(v)), offsetSize = wideOffsets ? 4 : 2;
+    w.u16(id).u8((font.layout ? 0x80 : 0) | (wideOffsets ? 0x08 : 0) | (wideCodes ? 0x04 : 0) | (font.italic ? 0x02 : 0) | (font.bold ? 0x01 : 0));
+    w.u8(font.language || 0);
+    const name = Buffer.from(font.name, 'utf8');
+    w.u8(name.length + (font.nameNul ? 1 : 0)).raw(name);
+    if (font.nameNul) w.u8(0);
+    w.u16(n);
+    if (n === 0) {
+      if (!font.noCodeTableOffset) offset(offsetSize);
+    } else {
+      const shapes = font.glyphs.map((g) => glyphShape(g.records));
+      let at = (n + 1) * offsetSize;
+      for (const s of shapes) { offset(at); at += s.length; }
+      offset(at);
+      shapes.forEach((s) => w.raw(s));
+      for (const g of font.glyphs) (wideCodes ? w.u16(g.code) : w.u8(g.code));
+    }
+    if (font.layout) {
+      w.u16(font.layout.ascent).u16(font.layout.descent).u16(font.layout.leading & 0xffff);
+      for (const g of font.glyphs) w.u16(g.advance & 0xffff);
+      if (!font.noBounds) {
+        for (const g of font.glyphs) rect(w, g.bounds || { xMax: 0, yMax: 0 });
+        const kerning = font.kerning || [];
+        w.u16(kerning.length);
+        for (const [left, right, adjustment] of kerning) {
+          if (wideCodes) w.u16(left).u16(right); else w.u8(left).u8(right);
+          w.u16(adjustment & 0xffff);
+        }
+      }
+    }
+  }));
+}
+// spec = { version (1|2), bounds, matrix?, records: [{ fontId?, height?, color?: [r, g, b, a?], x?, y?, glyphs: [[index, advance]] }] }
+function defineText(id, spec) {
+  const version = spec.version || 1, all = spec.records.flatMap((r) => r.glyphs);
+  const glyphBits = Math.max(1, unsignedBits(Math.max(0, ...all.map((g) => g[0]))));
+  const advanceBits = Math.max(1, signedBits(...all.map((g) => g[1])));
+  return tag(version === 2 ? 33 : 11, body((w) => {
+    w.u16(id);
+    rect(w, spec.bounds);
+    matrix(w, spec.matrix || {});
+    w.u8(glyphBits).u8(advanceBits);
+    for (const r of spec.records) {
+      const has = (k) => r[k] !== undefined;
+      w.u8(0x80 | (has('fontId') ? 0x08 : 0) | (has('color') ? 0x04 : 0) | (has('y') ? 0x02 : 0) | (has('x') ? 0x01 : 0));
+      if (has('fontId')) w.u16(r.fontId);
+      if (has('color')) shapeColor(w, r.color, version === 2 ? 3 : 1);
+      if (has('x')) w.u16(r.x & 0xffff);
+      if (has('y')) w.u16(r.y & 0xffff);
+      if (has('fontId')) w.u16(r.height);
+      w.u8(r.glyphs.length);
+      for (const [index, advance] of r.glyphs) w.ub(glyphBits, index).sb(advanceBits, advance);
+      w.align();
+    }
+    if (!spec.noEnd) w.u8(0);
+  }));
+}
+/* f = { bounds, text?, html?, fontId?, fontClass?, height?, color?: [r, g, b, a?], maxLength?, align?, leftMargin?,
+         rightMargin?, indent?, leading?, variable?, wordWrap?, multiline?, password?, readOnly? (default true),
+         autoSize?, noSelect?, border?, wasStatic?, useOutlines? } */
+function defineEditText(id, f) {
+  const has = (k) => f[k] !== undefined;
+  const layout = ['align', 'leftMargin', 'rightMargin', 'indent', 'leading'].some(has);
+  return tag(37, body((w) => {
+    w.u16(id);
+    rect(w, f.bounds);
+    w.bit(has('text')).bit(f.wordWrap).bit(f.multiline).bit(f.password).bit(f.readOnly !== false).bit(has('color')).bit(has('maxLength')).bit(has('fontId'));
+    w.bit(has('fontClass')).bit(f.autoSize).bit(layout).bit(f.noSelect).bit(f.border).bit(f.wasStatic).bit(f.html).bit(f.useOutlines);
+    if (has('fontId')) w.u16(f.fontId);
+    if (has('fontClass')) w.string(f.fontClass);
+    if (has('fontId') || has('fontClass')) w.u16(f.height);
+    if (has('color')) w.u8(f.color[0]).u8(f.color[1]).u8(f.color[2]).u8(f.color[3] === undefined ? 255 : f.color[3]);
+    if (has('maxLength')) w.u16(f.maxLength);
+    if (layout) w.u8(f.align || 0).u16(f.leftMargin || 0).u16(f.rightMargin || 0).u16((f.indent || 0) & 0xffff).u16((f.leading || 0) & 0xffff);
+    w.string(f.variable || '');
+    if (has('text')) w.string(f.text);
+  }));
+}
+
 const T = {
   End: 0, ShowFrame: 1, DefineShape: 2, PlaceObject: 4, RemoveObject: 5, SetBackgroundColor: 9, DoAction: 12,
   PlaceObject2: 26, RemoveObject2: 28, DefineSprite: 39, FrameLabel: 43, DoInitAction: 59,
@@ -350,5 +439,5 @@ function swf({ signature = 'FWS', version = 10, declaredLength, append, ...rest 
 module.exports = {
   BitWriter, signedBits, rect, matrix, cxform, body, tag, defineShape, T, swf, movieBody, STAGE_550x400,
   splitJpeg, png, crc32, defineBitsLossless, defineBitsJPEG2, defineBitsJPEG3, defineBits, jpegTables, A, doAction,
-  defineButton2, defineButton, defineButtonCxform
+  defineButton2, defineButton, defineButtonCxform, glyphShape, defineFont2, defineText, defineEditText
 };

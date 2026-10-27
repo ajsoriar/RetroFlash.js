@@ -1,22 +1,25 @@
-/* RetroFlash.js v0.3 - SWF player prototype (browser classic script). Load swf-reader.js first.
+/* RetroFlash.js v0.4 - SWF player prototype (browser classic script). Load swf-reader.js first.
    API: const player = new RetroFlash.Player({ canvas }); await player.load(file); player.play();
    Character dictionary, display list and timelines (root and DefineSprite), DefineShape 1-4 and bitmaps
    (JPEG/PNG/GIF via the browser decoder, lossless and JPEG alpha in JS) drawn with Canvas 2D, clipDepth masks,
-   AVM1 buttons (DefineButton/DefineButton2: states, hit areas, pointer and keyboard events), and a controlled
-   AVM1 subset for timeline control (stop/play/goto/setTarget) in frame scripts and button actions. It never
-   evaluates JavaScript or navigates. Text, sound and morph shapes are not drawn yet; see getDiagnostics().unsupported.
+   text (DefineText with embedded glyphs; DefineEditText with embedded or device fonts, word wrap, alignment
+   and an HTML subset), AVM1 buttons (DefineButton/DefineButton2: states, hit areas, pointer and keyboard
+   events), and a controlled AVM1 subset for timeline control (stop/play/goto/setTarget) in frame scripts and
+   button actions. It never evaluates JavaScript or navigates. Sound, video and morph shapes are not drawn yet;
+   see getDiagnostics().unsupported.
 */
 (function (global) {
   'use strict';
 
-  var VERSION = '0.3.0';
+  var VERSION = '0.4.0';
   var MAX_NESTING = 32;           // nested sprite/button instances
   var MAX_INSTANCES = 100000;     // sprite/button instances created in one step (tick, seek, input event); hostile-file budget
   var GRADIENT_HALF = 16384;      // SWF gradients are defined on a 32768-twip square centred on the origin
   var SHAPE_CODES = { 2: 1, 22: 1, 32: 1, 83: 1 };
   var BITMAP_CODES = { 6: 1, 20: 1, 21: 1, 35: 1, 36: 1, 90: 1 };
+  var FONT_CODES = { 10: 1, 48: 1, 75: 1 };
   // Other definition tags whose body starts with the new character id (UI16); placed but not drawn yet.
-  var CHARACTER_TAGS = { 10: 1, 11: 1, 14: 1, 33: 1, 37: 1, 46: 1, 48: 1, 60: 1, 75: 1, 84: 1, 87: 1, 91: 1 };
+  var CHARACTER_TAGS = { 14: 1, 46: 1, 60: 1, 84: 1, 87: 1, 91: 1 };
   // BUTTONCONDACTION condition bits (little-endian UI16; bits 9-15 hold a key code).
   var BUTTON = {
     IDLE_TO_OVER_UP: 1 << 0, OVER_UP_TO_IDLE: 1 << 1, OVER_UP_TO_OVER_DOWN: 1 << 2, OVER_DOWN_TO_OVER_UP: 1 << 3,
@@ -358,7 +361,7 @@
   }
 
   function Movie(swf) {
-    var characters = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = [];
+    var characters = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = [], fontInfos = [];
     // A definition whose body could not be decoded still defines its id (first UI16), so placements report
     // it as an invalid character rather than a missing one.
     function invalidCharacter(tag) {
@@ -376,6 +379,17 @@
         else invalidCharacter(tag);
       } else if (tag.code === 7 || tag.code === 34) {
         if (decoded) characters[f.buttonId] = buttonCharacter(swf, tag);
+        else invalidCharacter(tag);
+      } else if (FONT_CODES[tag.code]) {
+        if (decoded) characters[f.fontId] = fontCharacter(f, tag.name);
+        else invalidCharacter(tag);
+      } else if (tag.code === 13 || tag.code === 62) {
+        if (f) fontInfos.push(f);
+      } else if (tag.code === 11 || tag.code === 33) {
+        if (decoded) characters[f.characterId] = { type: 'text', id: f.characterId, name: tag.name, text: f, glyphs: null };
+        else invalidCharacter(tag);
+      } else if (tag.code === 37) {
+        if (decoded) characters[f.characterId] = { type: 'editText', id: f.characterId, name: tag.name, field: f, version: swf.version, layout: null };
         else invalidCharacter(tag);
       } else if (tag.code === 23) {
         if (f) buttonColors[f.buttonId] = f.colorTransforms;
@@ -396,6 +410,16 @@
       var button = characters[id];
       if (!button || button.type !== 'button') return;
       buttonColors[id].forEach(function (cx, i) { if (button.records[i]) button.records[i].cx = toColorTransform(cx); });
+    });
+    // DefineFontInfo gives a DefineFont its name, style and the character code of each glyph.
+    fontInfos.forEach(function (info) {
+      var font = characters[info.fontId];
+      if (!font || font.type !== 'font') return;
+      font.fontName = info.name;
+      font.bold = info.bold;
+      font.italic = info.italic;
+      font.byCode = new Map();
+      info.codes.forEach(function (code, i) { if (i < font.glyphs.length && !font.byCode.has(code)) font.byCode.set(code, i); });
     });
     var root = buildTimeline(swf.tags);
     this.swf = swf;
@@ -438,6 +462,371 @@
       characters[id].source = null;
     });
   };
+
+  // ---- Fonts and text -----------------------------------------------------------------------------------------
+  var GUTTER = 40;                                      // twips between a text field's bounds and its text (2 px)
+  var BULLET_INDENT = 720;                              // twips: text of an HTML <li> starts 36 px further right
+  var DEFAULT_FONT_SIZE = 12;                           // px, for text fields without a font height
+  var DEVICE_ASCENT = 0.905, DEVICE_DESCENT = 0.212;    // device-font metrics per px of size when the browser gives none
+  var MAX_HTML_TAG = 4096;                              // characters; longer HTML tags are dropped
+  var TEXT_BLACK = { r: 0, g: 0, b: 0, a: 255 };
+  var GLYPH_FILL = [{ type: 'solid', color: TEXT_BLACK }];
+
+  // Font character: glyph outlines on an EM square of 1024 units (DefineFont3: 20480), looked up by index
+  // (DefineText) or by UTF-16 code unit (text fields).
+  function fontCharacter(f, tagName) {
+    var font = {
+      type: 'font', id: f.fontId, name: tagName, fontName: f.name || '', bold: !!f.bold, italic: !!f.italic,
+      em: f.fontVersion === 3 ? 20480 : 1024, glyphs: f.glyphs, byCode: new Map(),
+      hasLayout: !!f.hasLayout, ascent: f.ascent || 0, descent: f.descent || 0
+    };
+    f.glyphs.forEach(function (g, i) { if (g.code !== null && !font.byCode.has(g.code)) font.byCode.set(g.code, i); });
+    return font;
+  }
+  // Fill commands of a glyph (all of its contours), cached on the glyph.
+  function glyphCommands(glyph) {
+    if (!glyph.commands) {
+      var geometry = buildShapeGeometry({ fillStyles: GLYPH_FILL, lineStyles: [], records: glyph.records }), cmds = [];
+      geometry.groups.forEach(function (g) {
+        g.fills.forEach(function (fill) { for (var i = 0; i < fill.commands.length; i++) cmds.push(fill.commands[i]); });
+      });
+      glyph.commands = cmds;
+    }
+    return glyph.commands;
+  }
+
+  /* DefineText: glyph placements in the text's own space (before its matrix), each
+     { glyph, x, y, scale, color }. Font, height, colour and offsets carry over between records; the glyph
+     scale is height / EM. */
+  function staticTextGlyphs(character, characters, report) {
+    var out = [], font = null, height = 0, color = TEXT_BLACK, x = 0, y = 0, id = character.id;
+    character.text.records.forEach(function (rec) {
+      if (rec.fontId !== undefined) {
+        font = characters[rec.fontId];
+        height = rec.height;
+        if (!font || font.type !== 'font') {
+          report('render:missingFont', 'Static text refers to a font that is not defined; those glyphs are not drawn.', id + ' → ' + rec.fontId);
+          font = null;
+        }
+      }
+      if (rec.color) color = rec.color;
+      if (rec.x !== undefined) x = rec.x;
+      if (rec.y !== undefined) y = rec.y;
+      rec.glyphs.forEach(function (entry) {
+        var glyph = font && font.glyphs[entry.index];
+        if (glyph) out.push({ glyph: glyph, x: x, y: y, scale: height / font.em, color: color });
+        else if (font) report('render:missingGlyph', 'Static text uses a glyph index the font does not have; not drawn.', id + ' → ' + font.id + '#' + entry.index);
+        x += entry.advance;
+      });
+    });
+    return out;
+  }
+
+  /* Text field formats, as in Flash's TextFormat: { face, size (px), color {r, g, b}, bold, italic, underline,
+     align (0 left, 1 right, 2 center, 3 justify), leftMargin, rightMargin, indent, blockIndent, leading (px),
+     bullet }. The field's default format comes from DefineEditText. */
+  function fieldFormat(field, characters, version) {
+    var font = field.fontId !== undefined ? characters[field.fontId] : null, html = field.html;
+    if (font && font.type !== 'font') font = null;
+    function px(v) { return (v || 0) / 20; }
+    return {
+      face: field.fontClass || (font && font.fontName) || 'Times New Roman',
+      size: field.fontHeight !== undefined ? field.fontHeight / 20 : DEFAULT_FONT_SIZE,
+      // Text colour alpha is ignored.
+      color: field.color ? { r: field.color.r, g: field.color.g, b: field.color.b } : { r: 0, g: 0, b: 0 },
+      // HTML fields do not inherit bold or italic from the font, and start left-aligned unless the SWF is
+      // version 8 or later and the field has initial text.
+      bold: !html && !!(font && font.bold), italic: !html && !!(font && font.italic), underline: false,
+      align: html && (version < 8 || field.initialText === undefined) ? 0 : field.align || 0,
+      leftMargin: px(field.leftMargin), rightMargin: px(field.rightMargin), indent: px(field.indent),
+      blockIndent: 0, leading: px(field.leading), bullet: false
+    };
+  }
+  var HTML_ENTITIES = { lt: '<', gt: '>', amp: '&', quot: '"', apos: '\'', nbsp: '\u00a0' };
+  function decodeEntities(s) {
+    return s.replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{1,8});/gi, function (m, e) {
+      if (e.charAt(0) === '#') {
+        var n = e.charAt(1) === 'x' || e.charAt(1) === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+      }
+      var v = HTML_ENTITIES[e.toLowerCase()];
+      return v === undefined ? m : v;
+    });
+  }
+  function htmlAttributes(source) {
+    var attrs = Object.create(null), re = /([^\s=\/]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g, m;
+    while ((m = re.exec(source))) attrs[m[1].toLowerCase()] = decodeEntities(m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4]);
+    return attrs;
+  }
+  // <font size>: absolute, or relative with + / -; digits after the first non-digit are ignored.
+  function htmlFontSize(value, current, version) {
+    var sign = value.charAt(0) === '+' || value.charAt(0) === '-' ? value.charAt(0) : '';
+    var digits = /^\d+/.exec(sign ? value.slice(1) : value);
+    if (!digits) return current;
+    var n = parseInt(digits[0], 10);
+    n = sign === '+' ? current + n : sign === '-' ? current - n : n;
+    return version < 13 ? Math.max(1, Math.min(127, n)) : Math.max(1, n);
+  }
+  function htmlNumber(value, current) {
+    var n = parseFloat(value);
+    return isFinite(n) ? n : current;
+  }
+  /* The HTML subset of Flash text fields, as spans [{ text, format }] with '\n' line breaks. Supported:
+     <p align>, <br>, <font face size color>, <b>, <i>, <u>, <a> (drawn as text), <li> (bullet),
+     <textformat leftmargin rightmargin indent blockindent leading>. Unknown tags keep the current format;
+     end tags that do not close the innermost open tag are ignored. Up to SWF 7, whitespace-only text between
+     tags is dropped; up to SWF 6, fields always behave as multiline. */
+  function parseHtmlText(html, base, multiline, version, report) {
+    multiline = multiline || version <= 6;
+    var spans = [], stack = [{ tag: '', format: base }], pOpen = false;
+    function top() { return stack[stack.length - 1].format; }
+    function emit(text, format) { if (text) spans.push({ text: text, format: format }); }
+    function endsWithBreak() { return !spans.length || /\n$/.test(spans[spans.length - 1].text); }
+    function text(raw) {
+      if (!raw) return;
+      var t = decodeEntities(raw);
+      if (version <= 7 && !t.trim()) return;
+      emit(t.replace(/\r\n|\r|\n/g, '\n'), top());
+    }
+    /* Linear scan (hostile text must not cause quadratic regex work): `<` starts a tag only before a name or
+       `/name`; a tag without `>` ends the markup, and the rest is text. */
+    var i = 0, at = 0;
+    for (;;) {
+      var lt = html.indexOf('<', at);
+      if (lt < 0) break;
+      if (html.substr(lt, 4) === '<!--') {
+        var close = html.indexOf('-->', lt + 4);
+        text(html.slice(i, lt));
+        i = at = close < 0 ? html.length : close + 3;
+        continue;
+      }
+      if (!/^<\/?[a-zA-Z]/.test(html.substr(lt, 3))) { at = lt + 1; continue; }
+      var gt = html.indexOf('>', lt);
+      if (gt < 0) break;
+      text(html.slice(i, lt));
+      i = at = gt + 1;
+      if (gt - lt > MAX_HTML_TAG) continue; // an absurdly long tag is dropped
+      var m = /^<(\/?)([a-zA-Z][a-zA-Z0-9]*)([\s\S]*)>$/.exec(html.slice(lt, gt + 1));
+      if (!m) continue;
+      var name = m[2].toLowerCase();
+      if (m[1]) {
+        if (stack.length > 1 && stack[stack.length - 1].tag === name) {
+          if (name === 'p' && multiline && pOpen) { pOpen = false; emit('\n', top()); }
+          if (name === 'li' && multiline) emit('\n', top());
+          stack.pop();
+        }
+        continue;
+      }
+      var format = Object.assign({}, top()), a = htmlAttributes(m[3]), selfClosing = /\/\s*$/.test(m[3]);
+      if (name === 'br' || name === 'sbr') {
+        if (multiline || name === 'sbr') emit('\n', format);
+        continue;
+      }
+      if (name === 'img') {
+        report('text:htmlImage', 'Images in HTML text fields are not drawn.');
+        continue;
+      }
+      if (name === 'p') {
+        pOpen = true;
+        var align = (a.align || '').toLowerCase(), aligns = { left: 0, right: 1, center: 2, justify: 3 };
+        if (align in aligns) format.align = aligns[align];
+      } else if (name === 'font') {
+        if (a.face) format.face = a.face;
+        if (a.size) format.size = htmlFontSize(a.size, format.size, version);
+        var hex = a.color && /^#\s*([0-9a-f]+)/i.exec(a.color);
+        if (hex) {
+          var rgb = parseInt(hex[1].slice(-6), 16);
+          format.color = { r: (rgb >> 16) & 255, g: (rgb >> 8) & 255, b: rgb & 255 };
+        }
+      } else if (name === 'b') {
+        format.bold = true;
+      } else if (name === 'i') {
+        format.italic = true;
+      } else if (name === 'u') {
+        format.underline = true;
+      } else if (name === 'li') {
+        if (multiline && !endsWithBreak()) emit('\n', top());
+        format.bullet = true;
+      } else if (name === 'textformat') {
+        if (a.leftmargin !== undefined) format.leftMargin = htmlNumber(a.leftmargin, format.leftMargin);
+        if (a.rightmargin !== undefined) format.rightMargin = htmlNumber(a.rightmargin, format.rightMargin);
+        if (a.indent !== undefined) format.indent = htmlNumber(a.indent, format.indent);
+        if (a.blockindent !== undefined) format.blockIndent = htmlNumber(a.blockindent, format.blockIndent);
+        if (a.leading !== undefined) format.leading = htmlNumber(a.leading, format.leading);
+      }
+      if (selfClosing) { if (name === 'p') pOpen = false; continue; }
+      stack.push({ tag: name, format: format });
+    }
+    text(html.slice(i));
+    return spans;
+  }
+  // CSS font-family for a device font name (a comma-separated list is allowed); unknown names fall back to a
+  // generic family: serif for Times New Roman, monospace for Courier-like names, sans-serif otherwise.
+  var GENERIC_FONTS = { _sans: 'sans-serif', _serif: 'serif', _typewriter: 'monospace' };
+  function cssFontFamily(face) {
+    var names = face.split(','), families = [], first = names[0].trim().toLowerCase();
+    names.forEach(function (name) {
+      name = name.trim();
+      var generic = GENERIC_FONTS[name.toLowerCase()];
+      if (generic) families.push(generic);
+      else if (name) families.push('"' + name.replace(/["\\;{}<>\r\n]/g, '') + '"');
+    });
+    families.push(first === 'times new roman' ? 'serif' : /^(courier|courier new|consolas|nsimsun)$/.test(first) ? 'monospace' : 'sans-serif');
+    return families.join(', ');
+  }
+  function trailingSpaces(s) {
+    var end = s.length;
+    while (end && s.charCodeAt(end - 1) === 32) end--;
+    return s.length - end;
+  }
+  // Embedded font for a format: same name and style first, then same name. Only fonts with glyphs qualify.
+  function findEmbeddedFont(characters, format) {
+    var name = format.face.toLowerCase(), byName = null, found = null;
+    Object.keys(characters).some(function (id) {
+      var c = characters[id];
+      if (c.type !== 'font' || !c.glyphs.length || c.fontName.toLowerCase() !== name) return false;
+      if (c.bold === !!format.bold && c.italic === !!format.italic) { found = c; return true; }
+      if (!byName) byName = c;
+      return false;
+    });
+    return found || byName;
+  }
+
+  /* Lays out a DefineEditText in its own space (twips). Text breaks at '\n' and, with WordWrap, between words
+     (a word longer than the line is split between characters). Each line's height is its largest ascent and
+     descent plus the leading; text starts 2 px (GUTTER) inside the bounds. Alignment uses the width between
+     the margins and never moves text left of the margin. AutoSize grows the field from its left edge.
+     measure = { width(css, text) -> px, metrics(css, sizePx) -> { ascent, descent } in px } for device fonts.
+     Returns { bounds, lines: [{ runs: [{ text, x, baseline, face, format }], bullet }], width, height }, where
+     face is { font, scale } for embedded glyphs or { css } for a device font. */
+  function layoutEditText(character, characters, measure, report) {
+    var field = character.field, version = character.version, id = character.id;
+    var base = fieldFormat(field, characters, version), source = field.initialText || '', faces = new Map();
+    var spans = field.html ? parseHtmlText(source, base, field.multiline, version, function (f, r) { report(f, r, id); })
+      : source ? [{ text: source.replace(/\r\n|\r|\n/g, '\n'), format: base }] : [];
+    if (field.password) spans = spans.map(function (s) { return { text: s.text.replace(/[^\n]/g, '*'), format: s.format }; });
+
+    // Font, metrics and width function for a format, cached by face, style and size.
+    function faceOf(format) {
+      var key = format.face + '|' + !!format.bold + '|' + !!format.italic + '|' + format.size, face = faces.get(key);
+      if (face) return face;
+      var size = format.size * 20, font = field.useOutlines ? findEmbeddedFont(characters, format) : null;
+      if (font) {
+        var k = size / font.em;
+        face = {
+          font: font, scale: k,
+          ascent: font.hasLayout ? font.ascent * k : DEVICE_ASCENT * size, descent: font.hasLayout ? font.descent * k : DEVICE_DESCENT * size,
+          width: function (s) {
+            var w = 0;
+            for (var i = 0; i < s.length; i++) {
+              var index = font.byCode.get(s.charCodeAt(i));
+              if (index !== undefined) w += font.glyphs[index].advance * k;
+            }
+            return w;
+          }
+        };
+      } else {
+        if (field.useOutlines) report('text:deviceFallback', 'A text field set to embedded fonts has no font with glyphs for its face; a device font is used.', id + ': ' + format.face);
+        var css = (format.italic ? 'italic ' : '') + (format.bold ? 'bold ' : '') + format.size + 'px ' + cssFontFamily(format.face);
+        var mt = measure.metrics(css, format.size);
+        face = { css: css, ascent: mt.ascent * 20, descent: mt.descent * 20, width: function (s) { return measure.width(css, s) * 20; } };
+      }
+      faces.set(key, face);
+      return face;
+    }
+
+    // Paragraphs: lists of { text, format } pieces split at '\n'; an empty paragraph keeps its format.
+    var paragraphs = [{ pieces: [], format: base }];
+    spans.forEach(function (span) {
+      span.text.split('\n').forEach(function (part, i) {
+        if (i > 0) paragraphs.push({ pieces: [], format: span.format });
+        var p = paragraphs[paragraphs.length - 1];
+        if (!p.pieces.length) p.format = span.format;
+        if (part) p.pieces.push({ text: part, format: span.format });
+      });
+    });
+    // HTML ends its last paragraph with a break that does not start a new line.
+    if (field.html && paragraphs.length > 1 && !paragraphs[paragraphs.length - 1].pieces.length) paragraphs.pop();
+
+    var b = field.bounds, fieldWidth = b.xMax - b.xMin, wrap = field.wordWrap, lines = [];
+    function leftOf(pf, first) { return (pf.leftMargin + pf.blockIndent + (first ? pf.indent : 0)) * 20 + (pf.bullet ? BULLET_INDENT : 0); }
+    function room(pf, first) { return fieldWidth - 2 * GUTTER - leftOf(pf, first) - pf.rightMargin * 20; }
+    paragraphs.forEach(function (p) {
+      var pf = p.format, line = { tokens: [], width: 0, format: pf, first: true };
+      function newLine() { lines.push(line); line = { tokens: [], width: 0, format: pf, first: false }; }
+      function add(text, format, face, width) { line.tokens.push({ text: text, format: format, face: face, width: width }); line.width += width; }
+      p.pieces.forEach(function (piece) {
+        var face = faceOf(piece.format), words = wrap ? piece.text.match(/[^ ]+ *| +/g) : [piece.text];
+        words.forEach(function (word) {
+          var width = face.width(word), visible = word.slice(0, word.length - trailingSpaces(word));
+          if (wrap && line.tokens.length && line.width + face.width(visible) > room(pf, line.first)) {
+            newLine();
+            if (!visible) return; // spaces at a wrap point are dropped
+          }
+          if (wrap && face.width(visible) > room(pf, line.first)) {
+            // A word wider than the line: split it between characters.
+            var chunk = '', chunkWidth = 0;
+            for (var c = 0; c < word.length; c++) {
+              var w = face.width(word.charAt(c));
+              if (chunk && line.width + chunkWidth + w > room(pf, line.first)) { add(chunk, piece.format, face, chunkWidth); newLine(); chunk = ''; chunkWidth = 0; }
+              chunk += word.charAt(c);
+              chunkWidth += w;
+            }
+            if (chunk) add(chunk, piece.format, face, chunkWidth);
+            return;
+          }
+          add(word, piece.format, face, width);
+        });
+      });
+      line.last = true;
+      lines.push(line);
+    });
+
+    // Vertical metrics, then the bounds (AutoSize), then horizontal positions.
+    var y = GUTTER, textWidth = 0;
+    lines.forEach(function (line) {
+      var ascent = 0, descent = 0, leading = line.format.leading * 20;
+      if (!line.tokens.length) { var face = faceOf(line.format); ascent = face.ascent; descent = face.descent; }
+      line.tokens.forEach(function (t) {
+        ascent = Math.max(ascent, t.face.ascent);
+        descent = Math.max(descent, t.face.descent);
+        leading = Math.max(leading, t.format.leading * 20);
+      });
+      line.baseline = y + ascent;
+      y = line.baseline + descent + leading;
+      textWidth = Math.max(textWidth, leftOf(line.format, line.first) + line.width + line.format.rightMargin * 20);
+    });
+    var bounds = { xMin: b.xMin, xMax: b.xMax, yMin: b.yMin, yMax: b.yMax };
+    if (field.autoSize) {
+      if (!wrap) { bounds.xMax = b.xMin + textWidth + 2 * GUTTER + (field.readOnly ? 0 : 50); fieldWidth = bounds.xMax - bounds.xMin; }
+      bounds.yMax = b.yMin + (y - GUTTER) + 2 * GUTTER;
+    }
+    var out = lines.map(function (line) {
+      var pf = line.format, tokens = line.tokens, align = pf.align, x = bounds.xMin + GUTTER + leftOf(pf, line.first), contentWidth = line.width;
+      // SWF 8+ ignores trailing spaces when aligning.
+      if (version >= 8 && align !== 0 && tokens.length) {
+        var lastToken = tokens[tokens.length - 1], trailing = trailingSpaces(lastToken.text);
+        if (trailing) contentWidth -= lastToken.face.width(lastToken.text.slice(-trailing));
+      }
+      var spare = room(pf, line.first) - contentWidth, gap = 0;
+      if (align === 1) x += Math.max(0, spare);
+      else if (align === 2) x += Math.max(0, spare / 2);
+      else if (align === 3 && !line.last && tokens.length > 1) gap = Math.max(0, spare / (tokens.length - 1));
+      var runs = [];
+      tokens.forEach(function (t) {
+        var prev = runs[runs.length - 1];
+        if (prev && !gap && prev.face === t.face && prev.format === t.format) prev.text += t.text;
+        else runs.push({ text: t.text, x: x, baseline: bounds.yMin + line.baseline, face: t.face, format: t.format, width: 0 });
+        runs[runs.length - 1].width += t.width;
+        x += t.width + gap;
+      });
+      var bullet = pf.bullet && line.first && tokens.length
+        ? { text: '\u2022', x: bounds.xMin + GUTTER + (pf.leftMargin + pf.blockIndent) * 20, baseline: bounds.yMin + line.baseline, face: tokens[0].face, format: tokens[0].format, width: 0 }
+        : null;
+      return { runs: bullet ? [bullet].concat(runs) : runs };
+    });
+    return { bounds: bounds, lines: out, width: textWidth, height: y - GUTTER };
+  }
 
   // ---- Timelines and display list ---------------------------------------------------------------------------
   /* A Clip is a running timeline (the root or a sprite instance) with its display list keyed by depth.
@@ -490,6 +879,11 @@
       obj.clip.gotoFrame(1);
     } else if (character.type === 'button') {
       obj.button = new ButtonInstance(this, character, level + 1, ancestry.concat(characterId));
+    } else if (character.type === 'editText') {
+      if (character.field.variableName) env.report('text:variable', 'Text fields bound to a variable show their initial text; ActionScript variables are not implemented yet.', characterId);
+      if (!character.field.readOnly) env.report('text:input', 'Input text fields are drawn but cannot be edited yet.', characterId);
+    } else if (character.type === 'font') {
+      env.report('render:fontPlaced', 'A font is not a display object; the placement draws nothing.', characterId);
     } else if (character.type === 'unsupported') {
       env.report('render:' + character.name, character.name + ' characters are placed but not drawn yet.', characterId);
     }
@@ -864,17 +1258,21 @@
     }
     return false;
   }
-  // Point in stage twips against a display object whose world matrix is `world`.
+  function inRect(r, p) { return p[0] >= r.xMin && p[0] <= r.xMax && p[1] >= r.yMin && p[1] <= r.yMax; }
+  /* Point in stage twips against a display object whose world matrix is `world`. Text is hit-tested by its
+     bounds (DefineText TextBounds, or the text field's bounds), in the character's own space. */
   function hitTestObject(obj, world, x, y, report) {
     var c = obj.character, local;
     if (!c) return false;
-    if (c.type === 'shape' || c.type === 'bitmap') {
+    if (c.type === 'shape' || c.type === 'bitmap' || c.type === 'text' || c.type === 'editText') {
       var inverse = invert(world);
       if (!inverse) return false;
       local = transformPoint(inverse, x, y);
     }
     if (c.type === 'shape') return pointInShape(geometryOf(c, report), local[0], local[1]);
     if (c.type === 'bitmap') return local[0] >= 0 && local[1] >= 0 && local[0] < c.width * 20 && local[1] < c.height * 20;
+    if (c.type === 'text') return inRect(c.text.bounds, local);
+    if (c.type === 'editText') return inRect(c.layout ? c.layout.bounds : c.field.bounds, local);
     if (c.type === 'sprite' && obj.clip) return hitTestList(obj.clip.displayList, world, x, y, report);
     if (c.type === 'button' && obj.button) return hitTestList(obj.button.hitList, world, x, y, report);
     return false;
@@ -1026,6 +1424,30 @@
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.report = report;
+    this.measure = canvasMeasure(this.ctx);
+  }
+  // Device-font measurement for layoutEditText. Ascent and descent come from the font's own metrics when the
+  // browser reports them (fontBoundingBox*), otherwise from typical sans-serif proportions.
+  function canvasMeasure(ctx) {
+    var metrics = new Map();
+    return {
+      width: function (css, text) { ctx.font = css; return ctx.measureText(text).width; },
+      metrics: function (css, size) {
+        var m = metrics.get(css);
+        if (!m) {
+          ctx.font = css;
+          var t = ctx.measureText('Mg');
+          m = t.fontBoundingBoxAscent !== undefined ? { ascent: t.fontBoundingBoxAscent, descent: t.fontBoundingBoxDescent }
+            : { ascent: DEVICE_ASCENT * size, descent: DEVICE_DESCENT * size };
+          metrics.set(css, m);
+        }
+        return m;
+      }
+    };
+  }
+  function glyphPath(glyph) {
+    glyphCommands(glyph);
+    return pathOf(glyph);
   }
   function geometryOf(character, report) {
     if (!character.geometry) {
@@ -1089,6 +1511,13 @@
       geometryOf(character, this.report).groups.forEach(function (g) {
         g.fills.forEach(function (fill) { maskPath.addPath(pathOf(fill), transform); });
       });
+    } else if (character.type === 'text') {
+      var base = multiply(world, toMatrix(character.text.matrix));
+      this.textGlyphs(character).forEach(function (p) {
+        maskPath.addPath(glyphPath(p.glyph), domMatrix(multiply(base, [p.scale, 0, 0, p.scale, p.x, p.y])));
+      });
+    } else if (character.type === 'editText') {
+      this.report('render:textMask', 'Text fields used as masks do not mask anything yet.', character.id);
     } else if ((character.type === 'sprite' && obj.clip) || (character.type === 'button' && obj.button)) {
       var container = obj.clip || obj.button;
       container.depths().forEach(function (d) {
@@ -1104,6 +1533,80 @@
     else if (character.type === 'sprite' && obj.clip) this.drawClip(obj.clip, world, cx);
     else if (character.type === 'button' && obj.button) this.drawClip(obj.button, world, cx);
     else if (character.type === 'bitmap') this.drawBitmap(character, world, cx);
+    else if (character.type === 'text') this.drawText(character, world, cx);
+    else if (character.type === 'editText') this.drawEditText(character, world, cx);
+  };
+  CanvasRenderer.prototype.textGlyphs = function (character) {
+    return character.glyphs || (character.glyphs = staticTextGlyphs(character, this.characters, this.report));
+  };
+  // DefineText: each glyph is filled with its record's colour (even-odd, like other shapes).
+  CanvasRenderer.prototype.drawText = function (character, world, cx) {
+    var ctx = this.ctx, base = multiply(world, toMatrix(character.text.matrix));
+    this.textGlyphs(character).forEach(function (p) {
+      var m = multiply(base, [p.scale, 0, 0, p.scale, p.x, p.y]);
+      ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+      ctx.fillStyle = cssColor(p.color, cx);
+      ctx.fill(glyphPath(p.glyph), 'evenodd');
+    });
+  };
+  /* Text field: optional border (white background, black frame), then the text clipped to the bounds narrowed
+     by the gutter horizontally. As in Flash Player, a field that uses device fonts is not drawn when it is
+     rotated, skewed or mirrored. */
+  CanvasRenderer.prototype.drawEditText = function (character, world, cx) {
+    var ctx = this.ctx, field = character.field, scale = Math.sqrt(Math.abs(world[0] * world[3] - world[1] * world[2]));
+    if (!scale || !isFinite(scale)) return;
+    if (!field.useOutlines && (Math.abs(world[1]) > 0.006 * scale || Math.abs(world[2]) > 0.006 * scale || world[0] <= 0 || world[3] <= 0)) {
+      return this.report('render:deviceTextTransform', 'Text fields with device fonts are not drawn when rotated, skewed or mirrored (as in Flash Player).', character.id);
+    }
+    var layout = character.layout || (character.layout = layoutEditText(character, this.characters, this.measure, this.report));
+    var b = layout.bounds, width = b.xMax - b.xMin, height = b.yMax - b.yMin;
+    ctx.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
+    if (field.border) {
+      ctx.fillStyle = cssColor({ r: 255, g: 255, b: 255, a: 255 }, cx);
+      ctx.fillRect(b.xMin, b.yMin, width, height);
+      ctx.strokeStyle = cssColor(TEXT_BLACK, cx);
+      ctx.lineWidth = 1 / scale;
+      ctx.strokeRect(b.xMin, b.yMin, width, height);
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(b.xMin + GUTTER, b.yMin, Math.max(0, width - 2 * GUTTER), height);
+    ctx.clip();
+    var self = this;
+    layout.lines.forEach(function (line) {
+      line.runs.forEach(function (run) { self.drawTextRun(run, world, cx, scale); });
+    });
+    ctx.restore();
+  };
+  CanvasRenderer.prototype.drawTextRun = function (run, world, cx, scale) {
+    var ctx = this.ctx, face = run.face, c = run.format.color, x = run.x;
+    ctx.fillStyle = cssColor({ r: c.r, g: c.g, b: c.b, a: 255 }, cx);
+    if (face.font) {
+      var font = face.font, k = face.scale;
+      for (var i = 0; i < run.text.length; i++) {
+        var index = font.byCode.get(run.text.charCodeAt(i));
+        if (index === undefined) {
+          if (run.text.charAt(i) !== ' ') this.report('text:missingGlyph', 'A text field uses a character its embedded font has no glyph for; not drawn.', font.id + ': ' + run.text.charAt(i));
+          continue;
+        }
+        var glyph = font.glyphs[index], m = multiply(world, [k, 0, 0, k, x, run.baseline]);
+        ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+        ctx.fill(glyphPath(glyph), 'evenodd');
+        x += glyph.advance * k;
+      }
+    } else {
+      // Device fonts are drawn in pixel units (1 px = 20 twips) so that font sizes stay ordinary.
+      ctx.setTransform(world[0] * 20, world[1] * 20, world[2] * 20, world[3] * 20, world[4], world[5]);
+      ctx.font = face.css;
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'left';
+      ctx.fillText(run.text, run.x / 20, run.baseline / 20);
+    }
+    if (run.format.underline && run.width) {
+      ctx.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
+      var thickness = Math.max(run.format.size, 1);
+      ctx.fillRect(run.x, run.baseline + thickness * 2, run.width, Math.max(thickness, 1 / scale));
+    }
   };
   // Canvas cannot apply per-channel colour transforms to images; only the alpha multiplier is applied.
   CanvasRenderer.prototype.bitmapAlpha = function (cx, source) {
@@ -1341,12 +1844,13 @@
     if (this.state === 'destroyed') throw playerError('DESTROYED', 'The player has been destroyed');
   };
   // Only the latest call wins: a load that is superseded by another load(), or by destroy(), resolves to null
-  // without changing the player, even if it fails.
+  // without changing the player, even if it fails. Its diagnostics are dropped from that moment on.
   Player.prototype.load = async function (input) {
     this.assertUsable();
     if (!global.SWFReader) throw playerError('MISSING_READER', 'Load swf-reader.js before retroflash.js');
     var serial = ++this.loadSerial, self = this;
     function superseded() { return self.state === 'destroyed' || serial !== self.loadSerial; }
+    function report(feature, reason, source) { if (!superseded()) self.report(feature, reason, source); }
     this.pause();
     if (this.movie) this.movie.release();
     this.state = 'loading';
@@ -1365,7 +1869,7 @@
     if (superseded()) return null;
     try {
       movie = new Movie(swf);
-      await movie.decodeBitmaps(this.options.maxBitmapPixels, this.options.maxTotalBitmapPixels, this.report);
+      await movie.decodeBitmaps(this.options.maxBitmapPixels, this.options.maxTotalBitmapPixels, report);
       if (superseded()) { movie.release(); return null; }
       this.movie = movie;
       this.fps = swf.fps > 0 ? swf.fps : 12;
@@ -1529,6 +2033,8 @@
       concatColorTransform: concatColorTransform, cssColor: cssColor,
       decodeLossless: decodeLossless, losslessByteLength: losslessByteLength, cleanJpeg: cleanJpeg, mergeJpegTables: mergeJpegTables,
       imageSize: imageSize, reservePixels: reservePixels,
+      glyphCommands: glyphCommands, staticTextGlyphs: staticTextGlyphs, fieldFormat: fieldFormat, parseHtmlText: parseHtmlText,
+      cssFontFamily: cssFontFamily, layoutEditText: layoutEditText, hitTestObject: hitTestObject,
       parseActions: parseActions, resolveTarget: resolveTarget, runActionQueue: runActionQueue,
       ButtonInstance: ButtonInstance, InputController: InputController, pickButton: pickButton, pointInShape: pointInShape,
       swfKeyCode: swfKeyCode, BUTTON: BUTTON

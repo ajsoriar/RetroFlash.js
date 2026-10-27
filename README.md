@@ -14,17 +14,20 @@ RetroFlash.js plays SWF animations on Canvas 2D:
 - the display list, built from `PlaceObject`/`RemoveObject`;
 - the timelines of the root movie and of nested `DefineSprite` instances;
 - `clipDepth` masks;
+- **text**:
+  - `DefineText` drawn with the glyph outlines of `DefineFont`/`DefineFont2`/`DefineFont3`;
+  - `DefineEditText` fields with embedded or device fonts, word wrap, alignment, margins, borders, `AutoSize`, and an HTML subset;
 - **buttons** (`DefineButton`/`DefineButton2`): up/over/down states, hit areas, the hand cursor, and pointer and keyboard events with their actions;
 - a controlled **AVM1 subset** for timeline control in frame scripts and button actions: `stop`, `play`, `nextFrame`/`prevFrame`, `gotoAndPlay`/`gotoAndStop` by frame or label, and `tellTarget`/`setTarget`. It never evaluates JavaScript or navigates.
 
-AS2 control flow and method calls (`if`, functions, `_root.gotoAndPlay()`) are not followed yet. Text, sound, and morph shapes are not drawn. All of these are listed in `getDiagnostics().unsupported`.
+AS2 control flow and method calls (`if`, functions, `_root.gotoAndPlay()`) are not followed yet, so text fields bound to variables show only their initial text. Input fields cannot be edited. Sound and morph shapes are not drawn. All of these are listed in `getDiagnostics().unsupported`.
 
 The code lives in [`src/`](./src/). Two classic scripts, with no dependencies:
 
 | File | Role |
 |---|---|
-| `src/swf-reader.js` | Parser (`SWFReader`, v0.4): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, buttons, and filter lists, and `inflate` |
-| `src/retroflash.js` | Player (`RetroFlash`, v0.3): dictionary, display list, timelines, bitmap decoding, buttons and input, the AVM1 subset, and the Canvas renderer |
+| `src/swf-reader.js` | Parser (`SWFReader`, v0.5): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, and filter lists, and `inflate` |
+| `src/retroflash.js` | Player (`RetroFlash`, v0.4): dictionary, display list, timelines, bitmap decoding, text layout, buttons and input, the AVM1 subset, and the Canvas renderer |
 
 ```html
 <canvas id="stage"></canvas>

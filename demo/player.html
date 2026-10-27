@@ -35,7 +35,23 @@ Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</
 </div>
 <h2>Not drawn or not supported</h2>
 <table><thead><tr><th>Feature</th><th>Count</th><th>Reason</th></tr></thead><tbody id="unsupported"></tbody></table>
+<!-- The source scripts, in the order of src/modules.json. dist/retroflash.min.js (npm run build) replaces them all. -->
 <script src="../src/swf-reader.js"></script>
+<script src="../src/core/base.js"></script>
+<script src="../src/core/math.js"></script>
+<script src="../src/render/geometry.js"></script>
+<script src="../src/display/bitmaps.js"></script>
+<script src="../src/text/fonts.js"></script>
+<script src="../src/text/html.js"></script>
+<script src="../src/text/layout.js"></script>
+<script src="../src/display/movie.js"></script>
+<script src="../src/display/clip.js"></script>
+<script src="../src/display/button.js"></script>
+<script src="../src/avm1/decoder.js"></script>
+<script src="../src/avm1/interpreter.js"></script>
+<script src="../src/input/hit-test.js"></script>
+<script src="../src/input/input.js"></script>
+<script src="../src/render/canvas-renderer.js"></script>
 <script src="../src/retroflash.js"></script>
 <script>
 (function(){

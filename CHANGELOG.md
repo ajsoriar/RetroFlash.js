@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The player source is split into modules.** `src/retroflash.js` is now only the public API. The rest is in `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/input/`, and `src/render/`, as classic scripts loaded in the order of `src/modules.json`. Behaviour and the public API do not change.
+- `RetroFlash.internals` now exposes every module export.
+
+### Added
+
+- **Build:** `npm run build` writes `dist/retroflash.min.js`, one minified file with the reader and the player, and its source map. It uses terser, the project's only development dependency (`npm install`). The tests and the demos still install nothing.
+- `npm run test:dist` runs the test suite against the bundle. `tests/unit/build.test.js` checks the module manifest and the demo's script list.
+
 ## RetroFlash 0.4.0 + SWFReader 0.5.0 — 2026-10-27 (text)
 
 ### Added

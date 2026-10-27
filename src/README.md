@@ -1,6 +1,6 @@
 # SWF Reader (v0.5)
 
-A dependency-free JavaScript reader for SWF file structure. It is a single classic script with no build step, and it is the foundation for a future Canvas renderer and ActionScript interpreter. It does not render anything and **never executes ActionScript**.
+A dependency-free JavaScript reader for SWF file structure. It is a single classic script, `swf-reader.js`, that works on its own, and it is the foundation of the player documented below. The reader does not render anything and **never executes ActionScript**.
 
 ## Usage
 
@@ -122,7 +122,28 @@ From the project root, run `node tests/run.js` (Node 16+, no dependencies). See 
 
 # RetroFlash.Player (`retroflash.js` v0.4)
 
-Load `swf-reader.js` first, then `retroflash.js`. The demo is [`../demo/player.html`](../demo/player.html).
+Load `../dist/retroflash.min.js` (built by `npm run build`), which holds the reader and the player. Alternatively, load the source scripts in the order of [`modules.json`](./modules.json), as the demo [`../demo/player.html`](../demo/player.html) does.
+
+### Source layout
+
+Each player module is a classic script. It takes what it needs from the internal namespace `RetroFlashModules`, which `core/base.js` creates, and adds its own exports there. `retroflash.js` comes last: it builds the public `RetroFlash` object and removes the namespace from the global object. Every export is also available as `RetroFlash.internals`, for tests and tooling; that is not a stable API.
+
+| Script | Contents |
+|---|---|
+| `swf-reader.js` | The reader (`SWFReader`) |
+| `core/base.js` | The module namespace, the version, default budgets, and player errors |
+| `core/math.js` | Matrices and colour transforms |
+| `render/geometry.js` | Shape records to fill and stroke commands, shared by the renderer and hit testing |
+| `display/bitmaps.js` | Bitmap decoding and pixel budgets |
+| `text/fonts.js`, `text/html.js`, `text/layout.js` | Fonts and static text, the HTML subset, and text field layout |
+| `display/movie.js` | The character dictionary and frame lists |
+| `display/clip.js`, `display/button.js` | Timelines and display lists, and button instances |
+| `avm1/decoder.js`, `avm1/interpreter.js` | AVM1 action records, and the timeline-control subset |
+| `input/hit-test.js`, `input/input.js` | Hit testing, and pointer and keyboard input |
+| `render/canvas-renderer.js` | The Canvas 2D renderer |
+| `retroflash.js` | `RetroFlash.Player`, the public API |
+
+A module uses only modules listed before it in `modules.json`. The one exception is `display/clip.js`, which reads `ButtonInstance` from the namespace when it creates a button, because buttons are built on clips.
 
 ```js
 const player = new RetroFlash.Player({

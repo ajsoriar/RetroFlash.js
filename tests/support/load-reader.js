@@ -2,6 +2,7 @@
 // Loads the browser classic script into Node. When Node lacks DecompressionStream (Node < 18), installs a
 // test-only stand-in built on zlib so the reader's real streaming code path still runs. The runtime never
 // ships or requires this polyfill.
+const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
@@ -24,7 +25,12 @@ if (typeof globalThis.DecompressionStream !== 'function') {
   };
 }
 
-require(path.join(__dirname, '..', '..', 'src', 'swf-reader.js'));
-require(path.join(__dirname, '..', '..', 'src', 'retroflash.js'));
+// The source scripts in the order of src/modules.json or, with `--dist`, the bundle built by tools/build.js.
+const root = path.join(__dirname, '..', '..');
+const useDist = process.argv.includes('--dist');
+const scripts = useDist ? [path.join(root, 'dist', 'retroflash.min.js')]
+  : require(path.join(root, 'src', 'modules.json')).map((file) => path.join(root, 'src', file));
+if (useDist && !fs.existsSync(scripts[0])) throw new Error('dist/retroflash.min.js not found: run npm install and npm run build first');
+scripts.forEach((file) => require(file));
 
-module.exports = { SWFReader: globalThis.SWFReader, RetroFlash: globalThis.RetroFlash, decompression };
+module.exports = { SWFReader: globalThis.SWFReader, RetroFlash: globalThis.RetroFlash, decompression, source: useDist ? 'dist/retroflash.min.js' : 'src' };

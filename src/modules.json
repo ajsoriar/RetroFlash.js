@@ -1,0 +1,19 @@
+[
+  "swf-reader.js",
+  "core/base.js",
+  "core/math.js",
+  "render/geometry.js",
+  "display/bitmaps.js",
+  "text/fonts.js",
+  "text/html.js",
+  "text/layout.js",
+  "display/movie.js",
+  "display/clip.js",
+  "display/button.js",
+  "avm1/decoder.js",
+  "avm1/interpreter.js",
+  "input/hit-test.js",
+  "input/input.js",
+  "render/canvas-renderer.js",
+  "retroflash.js"
+]

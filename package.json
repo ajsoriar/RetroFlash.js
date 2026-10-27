@@ -5,10 +5,15 @@
   "description": "Dependency-free Flash SWF player and ActionScript runtime in JavaScript and Canvas (in development).",
   "license": "MIT",
   "scripts": {
+    "build": "node tools/build.js",
     "test": "node tests/run.js",
+    "test:dist": "node tools/build.js && node tests/run.js --dist",
     "fixtures": "node tests/fixtures/build-fixtures.js"
   },
   "engines": {
     "node": ">=16"
+  },
+  "devDependencies": {
+    "terser": "5.51.2"
   }
 }

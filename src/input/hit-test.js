@@ -89,7 +89,8 @@
   }
   /* Topmost button whose hit area contains the point, searching from the highest depth down through sprites.
      As in AVM1, non-interactive content (shapes, bitmaps) never blocks a button underneath it. Masks are not
-     taken into account yet. Returns the button's display object or null. */
+     taken into account yet. Returns the button's display object, the link target of an HTML link (see
+     linkTarget), or null. A clip with button handlers whose `enabled` is false is not a button. */
   function pickButton(container, matrix, x, y, report) {
     var depths = container.depths();
     for (var i = depths.length - 1; i >= 0; i--) {
@@ -100,22 +101,52 @@
         if (hitTestList(obj.button.hitList, world, x, y, report)) return obj;
       } else if (obj.clip) {
         // A clip with button handlers (onPress, ...) takes the pointer for everything inside it, as in Flash Player.
-        if (isButtonClip(obj.clip)) {
+        if (isButtonClip(obj.clip) && enabled(obj.clip)) {
           if (hitTestList(obj.clip.displayList, world, x, y, report)) return obj;
           continue;
         }
         var found = pickButton(obj.clip, world, x, y, report);
         if (found) return found;
+      } else if (obj.character && obj.character.type === 'editText') {
+        var link = linkAt(obj, container, world, x, y);
+        if (link) return link;
       }
     }
     return null;
   }
   function isButtonClip(clip) { return !!(clip.env.scripts && clip.env.scripts.isButtonClip(clip)); }
-  // Every button instance and clip with button handlers on stage.
+  function enabled(clip) { return clip.env.scripts.clipFlag(clip, 'enabled'); }
+  // The layout a text field was drawn with (a bound field's own, else its character's), or null before drawing.
+  function layoutOf(obj) { return obj.layout || obj.character.layout || null; }
+  /* The link target of an HTML link in a text field: { link, obj, clip (the timeline the field is on) }. Targets
+     are kept per field and per layout, so the same link gives the same object while the pointer stays on it. */
+  function linkTarget(obj, container, link, layout) {
+    if (obj.linkLayout !== layout) { obj.linkLayout = layout; obj.linkTargets = new Map(); }
+    var t = obj.linkTargets.get(link);
+    if (!t) obj.linkTargets.set(link, t = { link: link, obj: obj, clip: container.parentClip || container });
+    return t;
+  }
+  // The link of a text field under the point (stage twips), inside the field's bounds; or null.
+  function linkAt(obj, container, world, x, y) {
+    var layout = layoutOf(obj), inverse = layout && layout.links && layout.links.length ? invert(world) : null;
+    if (!inverse) return null;
+    var p = transformPoint(inverse, x, y), b = layout.bounds;
+    if (p[0] < b.xMin || p[0] > b.xMax || p[1] < b.yMin || p[1] > b.yMax) return null;
+    for (var i = 0; i < layout.links.length; i++) {
+      var l = layout.links[i];
+      if (p[0] >= l.xMin && p[0] <= l.xMax && p[1] >= l.yMin && p[1] <= l.yMax) return linkTarget(obj, container, l, layout);
+    }
+    return null;
+  }
+  // Every button instance, enabled clip with button handlers, and HTML link on stage.
   function collectButtons(container, set) {
     container.displayList.forEach(function (obj) {
       if (obj.button) { set.add(obj); collectButtons(obj.button, set); }
-      else if (obj.clip) { if (isButtonClip(obj.clip)) set.add(obj); collectButtons(obj.clip, set); }
+      else if (obj.clip) { if (isButtonClip(obj.clip) && enabled(obj.clip)) set.add(obj); collectButtons(obj.clip, set); }
+      else if (obj.character && obj.character.type === 'editText') {
+        var layout = layoutOf(obj);
+        if (layout && layout.links) layout.links.forEach(function (l) { set.add(linkTarget(obj, container, l, layout)); });
+      }
     });
     return set;
   }

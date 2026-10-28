@@ -81,8 +81,9 @@
      descent plus the leading; text starts 2 px (GUTTER) inside the bounds. Alignment uses the width between
      the margins and never moves text left of the margin. AutoSize grows the field from its left edge.
      measure = { width(css, text) -> px, metrics(css, sizePx) -> { ascent, descent } in px } for device fonts.
-     Returns { bounds, lines: [{ runs: [{ text, x, baseline, face, format }], bullet }], width, height }, where
-     face is { font, scale } for embedded glyphs or { css } for a device font. `text` replaces the field's
+     Returns { bounds, lines: [{ runs: [{ text, x, baseline, face, format }], bullet }], links, width, height },
+     where face is { font, scale } for embedded glyphs or { css } for a device font, and links are the boxes of
+     HTML link text, { url, target, xMin, xMax, yMin, yMax }, one per run (a link may span several). `text` replaces the field's
      initial text (a field bound to a variable); for HTML fields it is HTML. */
   function layoutEditText(character, characters, measure, report, text) {
     var field = character.field, version = character.version, id = character.id;
@@ -188,6 +189,7 @@
       if (!wrap) { bounds.xMax = b.xMin + textWidth + 2 * GUTTER + (field.readOnly ? 0 : 50); fieldWidth = bounds.xMax - bounds.xMin; }
       bounds.yMax = b.yMin + (y - GUTTER) + 2 * GUTTER;
     }
+    var links = [];
     var out = lines.map(function (line) {
       var pf = line.format, tokens = line.tokens, align = pf.align, x = bounds.xMin + GUTTER + leftOf(pf, line.first), contentWidth = line.width;
       // SWF 8+ ignores trailing spaces when aligning.
@@ -207,12 +209,15 @@
         runs[runs.length - 1].width += t.width;
         x += t.width + gap;
       });
+      runs.forEach(function (run) {
+        if (run.format.url) links.push({ url: run.format.url, target: run.format.target, xMin: run.x, xMax: run.x + run.width, yMin: run.baseline - run.face.ascent, yMax: run.baseline + run.face.descent });
+      });
       var bullet = pf.bullet && line.first && tokens.length
         ? { text: '\u2022', x: bounds.xMin + GUTTER + (pf.leftMargin + pf.blockIndent) * 20, baseline: bounds.yMin + line.baseline, face: tokens[0].face, format: tokens[0].format, width: 0 }
         : null;
       return { runs: bullet ? [bullet].concat(runs) : runs };
     });
-    return { bounds: bounds, lines: out, width: textWidth, height: y - GUTTER };
+    return { bounds: bounds, lines: out, links: links, width: textWidth, height: y - GUTTER };
   }
 
   Object.assign(M, { GUTTER: GUTTER, DEVICE_ASCENT: DEVICE_ASCENT, DEVICE_DESCENT: DEVICE_DESCENT,

@@ -219,6 +219,13 @@
     if (obj && obj.clipActions && obj.clipActions.some(function (a) { return a.events.some(function (e) { return BUTTON_EVENTS.indexOf(e) >= 0; }); })) return true;
     return BUTTON_EVENTS.some(function (e) { return isFunction(getMember(rt, clip, EVENT_METHODS[e])); });
   };
+  /* Whether a clip acting as a button takes button events (its `enabled` member, true unless set to a false
+     value), and whether it shows the hand cursor (`useHandCursor`, likewise). Both follow the prototype chain, so
+     MovieClip.prototype.useHandCursor = false applies to every clip. */
+  ActionScheduler.prototype.clipFlag = function (clip, name) {
+    var v = getMember(runtimeOf(this), clip, name);
+    return v === undefined || v === UNKNOWN_VALUE || toBoolean(v, clip.env.version);
+  };
   /* setInterval and setTimeout: `fn` is called with `thisValue` every `interval` ms (once for a timeout).
      Timers run between frames (runTimers), at most once per check each. Returns the timer's id. */
   ActionScheduler.prototype.addTimer = function (clip, fn, thisValue, args, interval, repeat) {

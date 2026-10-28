@@ -36,7 +36,8 @@
     return isFinite(n) ? n : current;
   }
   /* The HTML subset of Flash text fields, as spans [{ text, format }] with '\n' line breaks. Supported:
-     <p align>, <br>, <font face size color>, <b>, <i>, <u>, <a> (drawn as text), <li> (bullet),
+     <p align>, <br>, <font face size color>, <b>, <i>, <u>, <a href target> (its text gets `url` and `target` in
+     its format; a link is not underlined unless it is in <u>), <li> (bullet),
      <textformat leftmargin rightmargin indent blockindent leading>. Unknown tags keep the current format;
      end tags that do not close the innermost open tag are ignored. Up to SWF 7, whitespace-only text between
      tags is dropped; up to SWF 6, fields always behave as multiline. */
@@ -108,6 +109,9 @@
         format.italic = true;
       } else if (name === 'u') {
         format.underline = true;
+      } else if (name === 'a') {
+        if (a.href) { format.url = a.href; format.target = a.target || ''; }
+        else { delete format.url; delete format.target; }
       } else if (name === 'li') {
         if (multiline && !endsWithBreak()) emit('\n', top());
         format.bullet = true;

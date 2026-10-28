@@ -23,7 +23,7 @@ Static text uses the movie's embedded glyphs. Text fields use embedded or device
 Frame scripts run through a controlled AVM1 subset, including expressions, control flow, functions, objects, clip events and common MovieClip APIs; unsupported features are reported below.
 Buttons respond to the mouse (hover, press, release) and to the keyboard once the canvas has focus.
 Video and text input are not supported yet; sound starts once you click or press a key on the page (browsers require it); what a movie uses is listed below.
-The player never fetches anything: when a script loads a movie, an image, variables or a sound (<code>loadMovie</code>, <code>loadVariables</code>, <code>Sound.loadSound</code>), the page answers with the file of the same name added below.
+Links and getURL open in a new tab, and javascript: URLs call the page's functions (never evaluated). The player never fetches anything: when a script loads a movie, an image, variables or a sound (<code>loadMovie</code>, <code>loadVariables</code>, <code>Sound.loadSound</code>), the page answers with the file of the same name added below.
 Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code>, <code>fws-buttons.swf</code>, <code>fws-text.swf</code> or <code>fws-sound.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>
 <input id="file" type="file" accept=".swf,application/x-shockwave-flash">
@@ -83,7 +83,11 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
   var resources=new Map();
   function nameOf(url){var s=String(url).split(/[?#]/)[0];s=s.slice(s.lastIndexOf('/')+1);try{s=decodeURIComponent(s);}catch(e){}return s.toLowerCase();}
   function addResources(files){Array.prototype.forEach.call(files,function(f){resources.set(f.name.toLowerCase(),f);});$('extras').textContent=resources.size?Array.from(resources.values(),function(f){return f.name;}).join(', '):'none';}
-  var player=new RetroFlash.Player({canvas:$('stage'),loader:function(request){return resources.get(nameOf(request.url))||null;}}), buttons=['play','pause','stop','step'];
+  // getURL, HTML links, javascript: URLs, FSCommand and ExternalInterface go to the browser host; loads are answered
+  // with the files added below. The demo keeps its page: what would replace it (_self, _parent, _top, or no target)
+  // opens in a new tab instead.
+  var player=new RetroFlash.Player({canvas:$('stage'),host:RetroFlash.createBrowserHost(),loader:function(request){return resources.get(nameOf(request.url))||null;}}), buttons=['play','pause','stop','step'];
+  player.on('navigate',function(r){if(!r.method&&/^(_self|_parent|_top|)$/i.test(r.target||'')){r.preventDefault();window.open(r.url,'_blank','noopener');}});
   function setEnabled(on){buttons.concat('seek').forEach(function(id){$(id).disabled=!on;});}
   function showFrame(){var info=player.getInfo();$('frame').textContent='frame '+info.currentFrame+' / '+info.frameCount+(info.rootPlaying?'':' · stopped by script');$('seek').value=info.currentFrame;}
   function showUnsupported(){

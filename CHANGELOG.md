@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Clickable links.** The text of `<a href target>` in HTML text fields is clickable: `asfunction:` calls an ActionScript function with its argument, and other URLs go where `getURL` sends them (`FSCommand:`, `javascript:`, navigation) through the host. The hand cursor shows over links. New diagnostic `avm1:asfunctionMissing`.
+- **`enabled` and `useHandCursor`** on clips that act as buttons, also through `MovieClip.prototype`.
+- The player demo uses `RetroFlash.createBrowserHost()`, so `getURL`, links, `javascript:` URLs and FSCommands reach the page; what would replace the demo page opens in a new tab.
 - **Drawing details.**
   - Per-channel colour transforms on bitmaps tint a cached copy of the image; alpha-only transforms stay an opacity.
   - Clipped bitmap fills extend their edge pixels past the bitmap, as Flash Player does.

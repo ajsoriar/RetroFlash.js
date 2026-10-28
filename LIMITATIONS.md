@@ -54,10 +54,9 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 
 26. Input text fields are drawn but cannot be edited [`text:input`]. There is no focus, caret, selection, or scrolling, and no `Selection` object.
 27. Embedded-font text ignores kerning and letter spacing.
-28. The HTML subset ignores the following:
-    - images (`<img>`);
-    - style sheets;
-    - links: `<a>` is drawn as plain text and cannot be clicked.
+28. The HTML subset ignores images (`<img>`) and style sheets. Links (`<a href>`) are clickable, but:
+    - they are found in the layout a field was last drawn with, so a link is not clickable before its field is drawn;
+    - `event:` links (an ActionScript 3 feature) are not supported.
 29. Device fonts depend on the fonts installed on the viewer's system and are never downloaded. Their metrics differ from Flash Player's, so line breaks may differ.
 30. Text fields used as masks do not mask anything [`render:textMask`].
 31. `DefineFont4` fonts work only in text fields that name them, through the browser's `FontFace` API. Without `FontFace`, or when the font file cannot be loaded, a device font is used [`text:font4`]. Static text (`DefineText`) cannot use their glyphs [`render:font4Text`].
@@ -70,7 +69,7 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 35. There is no right-click context menu: `ContextMenu` is not implemented, and `Stage.showMenu` has no effect.
 36. The mouse wheel is not delivered to the movie (no `Mouse.onMouseWheel`).
 37. `Key.isToggled` is always `false`. There is no IME or composed text input.
-38. The button properties of movie clips, and tab navigation between them, are not supported: `enabled`, `useHandCursor`, `hitArea`, `tabIndex`, `tabEnabled`, `focusEnabled`.
+38. `enabled` and `useHandCursor` work on clips that act as buttons, but not on `DefineButton` instances, which scripts cannot reach (`Button` is not implemented). `hitArea`, and tab navigation (`tabIndex`, `tabEnabled`, `focusEnabled`), are not supported.
 
 ## ActionScript (AVM1)
 

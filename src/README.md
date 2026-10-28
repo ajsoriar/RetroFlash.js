@@ -274,7 +274,7 @@ The **`AudioController`** (`env.audio`, in `audio/mixer.js`) belongs to the play
     - Each line is as tall as its largest ascent plus its largest descent plus the leading. Device-font ascent and descent come from the browser's font metrics.
     - Alignment (left, right, center, justify) uses the width between the margins, and never moves text left of the margin. From SWF 8, trailing spaces are ignored when aligning.
     - `AutoSize` grows the field from its left edge.
-  - **HTML subset:** `<p align>`, `<br>`, `<font face size color>`, `<b>`, `<i>`, `<u>`, `<a>` (drawn as plain text), `<li>` (a bullet and a 36 px indent), and `<textformat leftmargin rightmargin indent blockindent leading>`.
+  - **HTML subset:** `<p align>`, `<br>`, `<font face size color>`, `<b>`, `<i>`, `<u>`, `<a href target>` (see **Links** below), `<li>` (a bullet and a 36 px indent), and `<textformat leftmargin rightmargin indent blockindent leading>`.
     - Entities are decoded. Unknown tags keep the current format, and end tags that do not close the innermost tag are ignored.
     - HTML fields start left-aligned unless the SWF is version 8 or later and the field has initial text.
     - Up to SWF 7, whitespace-only text between tags is dropped. Up to SWF 6, HTML fields always behave as multiline.
@@ -306,7 +306,12 @@ The **`AudioController`** (`env.audio`, in `audio/mixer.js`) belongs to the play
   - Keys map to SWF `KeyPress` codes (arrows, Home/End, Enter, Escape, and so on, or printable ASCII) and run the matching actions of every button on stage. The canvas takes focus when it is pressed.
   - Button actions run through the same AVM1 subset, in the context of the button's parent timeline, right after the event; then the movie is redrawn.
   - Buttons that leave the stage are forgotten without events. A button that appears under a still pointer gets its roll-over after the next frame.
-  - The cursor becomes a hand over buttons.
+  - The cursor becomes a hand over buttons and links.
+  - **Links:** the text of an `<a href>` in an HTML text field is clickable where it is drawn (each line of a link that wraps is its own box). A link is not underlined unless it is also in `<u>`. A press and release on the same link follows it:
+    - `asfunction:name,argument` calls the function `name`, found on the field's timeline and then on the global object, or a path whose parts are clips or members (`_root.menu.open`), with the argument as a string. A name that is no function is reported (`avm1:asfunctionMissing`);
+    - any other URL goes where `getURL` sends it, to the link's `target`: `FSCommand:`, `javascript:` calls, or page navigation, through the Player option `host`.
+
+    Text fields do not block buttons underneath them, as in Flash Player. Links are found in the layout the field was last drawn with.
 
 ### Sound
 
@@ -512,7 +517,7 @@ Events, timers, and listeners are queued with the frame scripts and share their 
 
 - `Key`: `isDown(code)` (Windows virtual key codes, as in Flash Player: `Key.LEFT` is 37), `getCode`, `getAscii`, `isToggled` (always false), the key constants, `addListener`, `removeListener`.
 - `Mouse`: `hide` (the cursor becomes `none`), `show`, `addListener`, `removeListener`.
-- **Clips as buttons:** a clip with `onPress`, `onRelease`, `onReleaseOutside`, `onRollOver`, `onRollOut`, `onDragOver`, or `onDragOut` (methods or clip actions) is picked like a button: its shapes are its hit area, it takes the pointer for everything inside it, the cursor becomes a hand, and the events follow the button rules.
+- **Clips as buttons:** a clip with `onPress`, `onRelease`, `onReleaseOutside`, `onRollOver`, `onRollOut`, `onDragOver`, or `onDragOut` (methods or clip actions) is picked like a button: its shapes are its hit area, it takes the pointer for everything inside it, the cursor becomes a hand, and the events follow the button rules. Its `enabled` member set to a false value makes it no button (no events, no hand; one being pressed or hovered is forgotten without events), and `useHandCursor` set to a false value keeps the arrow. Both follow the prototype chain, so `MovieClip.prototype.useHandCursor = false` applies to every clip.
 
 **Timers.** `getTimer()` and `GetTime` give the milliseconds since the movie started. `setInterval(fn, ms, …)` and `setInterval(object, "method", ms, …)` call the function every `ms` milliseconds; `setTimeout` once; `clearInterval` and `clearTimeout` stop them. Timers run between frames, at most once per check each; a movie has at most 10,000 timers. `updateAfterEvent` does nothing: the player redraws after every event.
 

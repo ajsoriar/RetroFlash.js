@@ -32,6 +32,10 @@
   CLIP_BUTTON_EVENTS[BUTTON.OUT_DOWN_TO_OVER_DOWN] = 'dragOver';
   CLIP_BUTTON_EVENTS[BUTTON.OUT_DOWN_TO_IDLE] = 'releaseOutside';
   InputController.prototype.fire = function (target, state, condition) {
+    if (target.link) {
+      if (condition === BUTTON.OVER_DOWN_TO_OVER_UP) this.followLink(target);
+      return;
+    }
     if (!target.button) {
       if (target.clip) this.env.scripts.clipEvent(target.clip, CLIP_BUTTON_EVENTS[condition]);
       return;
@@ -41,6 +45,31 @@
     target.button.setState(state);
     if (target.button.character.trackAsMenu) this.env.report('input:trackAsMenu', 'Menu-tracking buttons are handled as push buttons.', target.characterId);
   };
+  /* A click on an HTML link (press and release on it). `asfunction:name,argument` calls the function `name`
+     (a name, from the field's timeline then the global object, or a path whose parts are clips or members) with
+     the argument as a string. Any other URL goes where getURL sends it: FSCommand, javascript: and page
+     navigation, to the link's target. */
+  InputController.prototype.followLink = function (target) {
+    var url = target.link.url, clip = target.clip, scheduler = this.env.scripts, version = clip.env.version;
+    if (!/^asfunction:/i.test(url)) return M.openURL(scheduler, url, target.link.target || '', 0, clip, version);
+    var rest = url.slice(11), comma = rest.indexOf(','), name = (comma < 0 ? rest : rest.slice(0, comma)).trim();
+    var rt = M.runtimeOf(scheduler), at = Math.max(name.lastIndexOf('.'), name.lastIndexOf('/'), name.lastIndexOf(':'));
+    var owner = at < 0 ? clip : ownerOf(rt, clip, name.slice(0, at), version), method = name.slice(at + 1);
+    var fn = (M.isClip(owner) || M.isObject(owner)) ? M.getMember(rt, owner, method) : undefined;
+    if (!M.isFunction(fn) && at < 0) fn = M.getMember(rt, rt.global, method);
+    if (!M.isFunction(fn)) return this.env.report('avm1:asfunctionMissing', 'An asfunction: link names a function that does not exist; nothing is called.', name);
+    scheduler.enqueueCall(clip, fn, owner && at >= 0 ? owner : clip, comma < 0 ? [] : [rest.slice(comma + 1)], 'asfunction:' + name);
+  };
+  // The object a dotted or slash path names from `clip`: each part a clip (_root, _parent, a child) or a member.
+  function ownerOf(rt, clip, path, version) {
+    var owner = clip;
+    path.split(/[.\/:]/).forEach(function (part) {
+      if (!part || !(M.isClip(owner) || M.isObject(owner))) return;
+      var next = M.isClip(owner) ? M.resolvePath(owner, part, version) : null;
+      owner = M.isClip(next) ? next : M.getMember(rt, owner, part);
+    });
+    return owner;
+  }
   // Buttons that left the stage are forgotten without events, as Flash does. The display list only changes
   // in ticks, frame scripts and seeks, so this runs after those (afterTick, Player.seek), not on every move.
   InputController.prototype.pruneRemoved = function () {
@@ -149,9 +178,12 @@
     this.pruneRemoved();
     return this.update(false);
   };
+  /* The hand over a button, a link, or a clip with button handlers, unless the clip's useHandCursor is false. */
   InputController.prototype.cursor = function () {
     if (this.env.scripts.mouseHidden) return 'none';
-    return this.hovered || this.pressed ? 'pointer' : '';
+    var target = this.pressed || this.hovered;
+    if (!target) return '';
+    return target.clip && !target.link && !this.env.scripts.clipFlag(target.clip, 'useHandCursor') ? '' : 'pointer';
   };
   // Browser KeyboardEvent.key -> SWF key code (SWF19 KeyPress codes; printable ASCII otherwise).
   var SWF_KEYS = { ArrowLeft: 1, ArrowRight: 2, Home: 3, End: 4, Insert: 5, Delete: 6, Backspace: 8, Enter: 13, ArrowUp: 14,

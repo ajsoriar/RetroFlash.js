@@ -87,7 +87,7 @@
     context.fillStyle = '#334155';
     context.font = '14px sans-serif';
     context.textAlign = 'center';
-    context.fillText('No se pudo cargar la película SWF', canvas.width / 2, canvas.height / 2 - 8);
+    context.fillText('Could not load the SWF movie', canvas.width / 2, canvas.height / 2 - 8);
     context.font = '12px sans-serif';
     context.fillText(error.message.slice(0, 90), canvas.width / 2, canvas.height / 2 + 14);
   }
@@ -130,7 +130,7 @@
     canvas.style.display = 'inline-block';
     canvas.style.backgroundColor = paramOf(element, 'bgcolor');
     canvas.setAttribute('role', 'img');
-    canvas.setAttribute('aria-label', element.getAttribute('title') || 'Película Flash');
+    canvas.setAttribute('aria-label', element.getAttribute('title') || 'Flash movie');
     if (element.id) canvas.id = element.id;
     if (element.className) canvas.className = element.className;
     element.parentNode.replaceChild(canvas, element);

@@ -132,15 +132,21 @@ const player = new RetroFlash.Player({
   actions: true,                    // run the AVM1 subset
   input: true,                      // pointer and keyboard on the canvas drive the movie's buttons
   loader: null,                     // gives the files that scripts load (see "Loading into clips")
+  host: null,                       // what the movie asks of the page (see "Browser interaction")
   maxActionSteps: 100000            // any of the limits below
 });
-await player.load(fileOrBuffer);     // same inputs as SWFReader.load; decodes bitmaps; resolves with getInfo(),
+await player.load(fileOrBuffer, { url, variables }); // options optional: the movie's _url and its FlashVars;
+                                     // same inputs as SWFReader.load; decodes bitmaps; resolves with getInfo(),
                                      // or null when a later load() or destroy() superseded it
 player.play(); player.pause(); player.stop(); player.step();
 player.seek(10); player.seek('label');
 player.getInfo();         // { state, version, width, height, fps, frameCount, currentFrame, rootPlaying, labels, ... }
 player.getDiagnostics();  // { diagnostics (reader), unsupported (reader + player) }
 player.on('load' | 'frame' | 'warning' | 'error' | 'end', fn); player.off(type, fn);
+player.on('navigate' | 'call' | 'fscommand' | 'callbacks' | 'interaction', fn); // see "Browser interaction"
+player.callback(name, args); player.getCallbacks(); // ExternalInterface.addCallback functions
+player.getInteractionLog(); player.clearInteractionLog(); // recent page/plugin requests, bounded to 100 entries
+RetroFlash.createBrowserHost(options); // a `host` that uses the browser's own APIs
 player.destroy();
 player.limits;            // the limits in force, frozen
 ```
@@ -181,7 +187,10 @@ Each player module is a classic script. It takes what it needs from the internal
 | `display/loader.js` | `LoadQueue`: movies, images, and variables loaded into clips through the host page's loader |
 | `input/hit-test.js`, `input/input.js` | Hit testing, and pointer and keyboard input |
 | `render/canvas-renderer.js` | The Canvas 2D renderer |
+| `avm1/external.js` | getURL to windows, `javascript:` URLs read as page calls, FSCommand, form variables, ExternalInterface values, the `HostBridge` |
+| `browser/host.js` | `RetroFlash.createBrowserHost` |
 | `retroflash.js` | `RetroFlash.Player`, the public API |
+| `browser/legacy-autoplay.js` | Replaces legacy Flash `<object>`/`<embed>` markup; the only script after `retroflash.js` |
 
 A module uses only modules listed before it in `modules.json`. The exceptions read from the namespace at run time: `display/clip.js` reads `ButtonInstance` when it creates a button, because buttons are built on clips, and `LoadQueue` when it creates a display context; `avm1/interpreter.js` and `avm1/globals.js` read `loadInto` when a script loads something.
 
@@ -270,7 +279,7 @@ A scrubbing `seek` and the creation of a button's hit area enter frames without 
 
 ### AVM1 (frame scripts and button actions)
 
-The player runs the `DoAction` scripts of each frame it enters (root and sprites alike) and the actions of button events, with a controlled interpreter for ActionScript 1 and 2 bytecode. It never evaluates JavaScript, never navigates, and never touches the page.
+The player runs the `DoAction` scripts of each frame it enters (root and sprites alike) and the actions of button events, with a controlled interpreter for ActionScript 1 and 2 bytecode. It never evaluates JavaScript and never touches the page itself: navigation, `javascript:` URLs, FSCommand and ExternalInterface go to the page's `host` (see [Browser interaction](#browser-interaction)). The reader lists `actionscript:DoAction` because the *reader* never runs code; the player does, and reports separately what it cannot run.
 
 **Executed:**
 
@@ -291,10 +300,9 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
 
 **Loads** (see [Loading into clips](#loading-into-clips)): `GetURL2` with a clip target (`loadMovie`, `unloadMovie`, `loadVariables`), and `GetURL` or `GetURL2` with the target `_level0` (`loadMovieNum`, `loadVariablesNum`).
 
-**Ignored, but reported:**
+**The page** (see [Browser interaction](#browser-interaction)): `GetURL`/`GetURL2` to a window (with the variables of a `GET` or `POST`), `javascript:` and `FSCommand:` URLs.
 
-- `GetURL` and `GetURL2` to a window (`getURL`): the player never navigates or opens windows (`avm1:GetURL`, `avm1:GetURL2`);
-- `ToggleQuality`, `StopSounds`.
+**Ignored, but reported:** `ToggleQuality`, `StopSounds`.
 
 **Unknown action codes** are reported as `avm1:Unknown_0x..` and skipped, as Flash Player skips them.
 
@@ -449,7 +457,7 @@ Events, timers, and listeners are queued with the frame scripts and share their 
 
 #### Loading into clips
 
-The `Player` API does not fetch files itself. The bundled browser bootstrap recognizes legacy Flash `<object>` and `<embed>` elements, then loads their SWF and movie-requested assets from the same origin. This automatic mode requires serving the page over HTTP or HTTPS; browsers do not let a page read a local `file://` SWF this way. For explicit `Player` use, a script that loads a movie, an image, or variables asks the host page, through the Player option `loader`:
+The `Player` API does not fetch files itself. A script that loads a movie, an image, or variables asks the host page, through the Player option `loader` (or, without one, `host.load`; see [Browser interaction](#browser-interaction)):
 
 ```js
 const files = new Map([['visor.swf', visorFile], ['img1.jpg', photoFile]]); // Files or Uint8Arrays
@@ -460,13 +468,62 @@ const player = new RetroFlash.Player({
 });
 ```
 
-- **The loader** receives the URL as the script wrote it and decides whether it may be loaded and where its bytes come from. It returns, or resolves to, a `Uint8Array`, another typed array, an `ArrayBuffer`, a `Blob`, or (for variables) a string; `null` or `undefined` refuses the URL (`load:refused`). Without a loader, a load is reported (`load:noLoader`) and nothing changes. A loader that uses `fetch` belongs to the page, which should only allow the URLs it trusts.
+- **The loader** receives the URL as the script wrote it and decides whether it may be loaded and where its bytes come from. It returns, or resolves to, a `Uint8Array`, another typed array, an `ArrayBuffer`, a `Blob`, or (for variables) a string; For a movie load it may also give an image the browser decoded (`HTMLImageElement`, `ImageBitmap`, canvas). `null` or `undefined` refuses the URL (`load:refused`). An error with `code` `LOAD_CORS`, `LOAD_NETWORK`, `LOAD_HTTP`, `LOAD_BLOCKED` or `INVALID_URL` is reported as `load:cors`, `load:network`, `load:http`, `load:blocked` or `load:invalidURL`; any other as `load:failed`. Failures are recoverable: the clip stays empty.
+- **Requests:** `{ url, type, method }`. With `GET` or `POST`, the variables of the script's timeline (or the clip, for its methods) are sent as strings, URL-encoded: appended to `url` for `GET`, as `body` for `POST`; `variables` holds the pairs. Without a loader, a load is reported (`load:noLoader`) and nothing changes. A loader that uses `fetch` belongs to the page, which should only allow the URLs it trusts.
 - **Targets:** `GetURL2` with its load-into-clip flag names the clip by a target path or a clip value, from the script's target; the MovieClip methods `loadMovie(url, method)`, `unloadMovie()`, and `loadVariables(url, method)` load into their clip; `_level0` is the root. Other levels are not supported (`load:level`).
 - **Movies:** a movie load empties the clip at once: its children leave with their `unload` events, the clip gets its own `unload`, and its variables and methods are cleared. It keeps its name, depth, transform, and clip events. When the file arrives, the clip plays the loaded movie's root timeline from frame 1 and gets `load`. The loaded movie keeps its own dictionary and SWF version: its scripts follow its version's rules (the built-in objects follow the main movie's), `getSWFVersion()` and `_url` report it, and its `_root` is the main movie's root. A failed load leaves the clip empty.
 - **Images:** a JPEG, PNG, or GIF file is shown at the clip's origin, one pixel per 20 twips. Its pixels come from a budget shared by everything loaded at once (`maxBitmapPixels` per image, `maxTotalBitmapPixels` in all); a movie's bitmaps take from the same budget. Unloading or replacing the content gives them back.
-- **Variables:** the text is read as URL-encoded `name=value` pairs (UTF-8 from SWF 6, Latin-1 before; `+` is a space) and set on the clip as strings; then the clip gets `data`. Variables are never sent: a load with `GET` or `POST` is made without them (`load:sendVariables`).
+- **Variables:** the text is read as URL-encoded `name=value` pairs (UTF-8 from SWF 6, Latin-1 before; `+` is a space) and set on the clip as strings; then the clip gets `data`.
 - **Timing:** what arrives is shown between frames, after the tick's scripts, or at once when the movie is not playing. A newer movie load into the same clip, or an unload, cancels an older one. At most 8 loads wait for the loader at once; more are dropped (`load:limit`). A file that is not a SWF, JPEG, PNG, or GIF, or that cannot be read, is reported (`load:failed`).
 - **Cleanup:** `stop()`, `load()`, and `destroy()` free loaded content, and drop loads that finish later.
+
+#### Browser interaction
+
+What a movie asks of the page that embeds it goes to the Player option `host`, an object with any of these methods (each optional), and `objectID`:
+
+| Method | Called for | Request |
+|---|---|---|
+| `navigate(request)` | `getURL` to a window (`GetURL`, `GetURL2`, `MovieClip.getURL`) | `{ url, target, method }`; with `GET`/`POST` also `variables` (and `body` for `POST`), as for loads |
+| `call(request)` | `javascript:` URLs and `ExternalInterface.call`; its return value is the call's result | `{ kind: 'javascript' \| 'external', name, args, source }` |
+| `fscommand(request)` | `fscommand(command, args)` (`FSCommand:` URLs) | `{ command, args }` |
+| `load(request)` | loads, when there is no `loader` option | see [Loading into clips](#loading-into-clips) |
+
+- **URLs** reach the host as the script wrote them; the host resolves them. An empty URL does nothing.
+- **`javascript:` URLs are never evaluated.** The text (percent-decoded) is read as statements separated by `;`: calls `name(…)` or `a.b.name(…)` whose arguments are literals (numbers, strings, `true`, `false`, `null`, `undefined`), and `void …`. Each call goes to `host.call` with its name and arguments: `javascript:panorama(2)` calls `panorama` with the number 2. Any other text goes to the host with `name: null`, and the browser host refuses it (`browser:javascriptUnsupported`).
+- **ExternalInterface** is available when there is a host. `call(name, args…)` converts the arguments to JavaScript (arrays, plain objects of the enumerable members; functions and cycles are `null`) and the result back; it gives `null` when the call fails. `addCallback(name, instance, method)` registers a function; the page calls it with `player.callback(name, [args])`, which runs it at once (a call made while the movie is calling the page is allowed) and redraws. The `callbacks` event gives the registered names.
+- **Events:** `navigate`, `call` and `fscommand` listeners get the request before the host. A listener that calls `request.preventDefault()` handles it, and for a call may set `request.result`.
+- **Interaction log:** `interaction` fires for outgoing navigation, page calls, FSCommands, `ExternalInterface.addCallback` registrations and clip loads, and for incoming `ExternalInterface` callbacks. Each frozen entry has `id`, `time` (Unix milliseconds), `direction` (`outgoing` or `incoming`), `channel`, `status`, and useful fields such as URL path, target, method, variable count, function name, argument count, resource type, or error code. Query strings, POST bodies, and argument values are omitted. `getInteractionLog()` returns the latest 100 entries; `clearInteractionLog()` clears them. The demo shows the latest 30.
+- **Diagnostics:** `browser:noHost` (no host, or no method for it), `browser:blocked`, `browser:invalidURL`, `browser:functionMissing`, `browser:callFailed`, `browser:javascriptUnsupported` (from host errors with the codes `BLOCKED`, `INVALID_URL`, `FUNCTION_MISSING`, `CALL_FAILED`, `UNSUPPORTED`), `browser:callbackMissing`, and `avm1:targetNotFound` for a load whose clip does not exist.
+
+##### The browser host
+
+`RetroFlash.createBrowserHost(options)` implements the host with the browser's own APIs, as the Flash Player plugin did:
+
+- `navigate`: `location.assign` for the current window, `window.open(url, target)` otherwise, a hidden form for `POST`;
+- `call`: calls the page function by name with `this` set to its owner; `eval`, `Function`, `setTimeout`/`setInterval` with text, `document.write`, names through `constructor`/`prototype`/`__proto__`, and `javascript:` arguments are refused (`BLOCKED`);
+- `fscommand`: calls `<objectID>_DoFSCommand(command, args)`;
+- `load`: `fetch` in CORS mode. A cross-origin response the server does not allow is `LOAD_CORS`, never bypassed; a cross-origin image may still be shown (as an `<img>` would be), without the movie reading its pixels.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `base` | the page | Base of relative URLs (the plugin's `base` parameter) |
+| `objectID` | `null` | `ExternalInterface.objectID` and the FSCommand handler name |
+| `allowScriptAccess` | `true` | `false` refuses page calls, FSCommand, and replacing the page (`_self`, `_parent`, `_top`) |
+| `allowNetworking` | `'all'` | `'internal'` also refuses opening pages; `'none'` also refuses loads |
+| `rewriteUrl(url, request)` | none | Returns the URL to use instead of the resolved one, for example a local copy of a remote file |
+| `maxFileBytes` | 50 MiB | Largest response read |
+
+Integrating a page function, as a legacy page with `panorama(num)` did:
+
+```js
+const player = new RetroFlash.Player({ canvas, host: RetroFlash.createBrowserHost({ objectID: 'prue004' }) });
+player.on('call', (r) => console.log('the movie calls', r.name, r.args)); // panorama [2]
+await player.load(bytes, { url: 'example_1.swf' });
+```
+
+##### Legacy markup
+
+The bundle replaces each Flash `<object>`/`<embed>` with a canvas that plays its SWF through the browser host. It reads `movie`/`src`/`data`, `base`, `FlashVars` (and the movie URL's query), `allowScriptAccess` (`always`, `never`, or `sameDomain`, the default: allowed when the SWF has the page's origin), `allowNetworking`, and `bgcolor`. The canvas takes the element's id; ExternalInterface callbacks become its methods. The page must be served over HTTP or HTTPS. Optional `window.RetroFlashConfig = { autoplay, base, allowScriptAccess, allowNetworking, rewriteUrl }`, set before the bundle runs, overrides them; the canvas dispatches a bubbling `retroflash:player` event (`detail: { player, element }`) before loading.
 
 #### Functions and objects
 
@@ -494,7 +551,8 @@ const player = new RetroFlash.Player({
 - `String` (`charAt`, `charCodeAt`, `concat`, `indexOf`, `lastIndexOf`, `slice`, `substring`, `substr`, `split`, `toLowerCase`, `toUpperCase`, `String.fromCharCode`), `Number` (`toString(radix)`, the constants), `Boolean`; called as functions they convert;
 - `Math` (every method and constant; `random` uses `Math.random`);
 - `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `escape`, `unescape`, `NaN`, `Infinity`; `trace` and `ASSetPropFlags` do nothing;
-- `MovieClip` methods: `play`, `stop`, `gotoAndPlay`, `gotoAndStop`, `nextFrame`, `prevFrame`, `duplicateMovieClip`, `removeMovieClip`, `getDepth`, `getBytesLoaded`, `getBytesTotal`, `loadMovie`, `unloadMovie`, `loadVariables`; `getURL` is ignored and reported.
+- `MovieClip` methods: `play`, `stop`, `gotoAndPlay`, `gotoAndStop`, `nextFrame`, `prevFrame`, `duplicateMovieClip`, `removeMovieClip`, `getDepth`, `getBytesLoaded`, `getBytesTotal`, `loadMovie`, `unloadMovie`, `loadVariables`, `getURL(url, window, method)`;
+- `flash.external.ExternalInterface` (`available`, `objectID`, `call`, `addCallback`); other `flash` packages read as unknown values.
 
 **Limits against hostile scripts:** prototype chains are followed for at most 256 steps; array indexes from 16,777,216 on are plain properties (an array never grows past that); a string built by concatenation, `join`, `concat`, `escape`, or `fromCharCode` that would pass 16,777,216 characters ends the block (`avm1:budget`).
 
@@ -540,7 +598,8 @@ const player = new RetroFlash.Player({
 Each of these is reported in `getDiagnostics().unsupported` when it is met:
 
 - ActionScript outside the subset above;
-- loads into levels other than `_level0`, `MovieClipLoader`, `LoadVars`, `XML` loading, and sending variables with a load;
+- loads into levels other than `_level0`, `MovieClipLoader`, `LoadVars`, `XML` loading;
+- `javascript:` URLs that are not calls with literal arguments (`browser:javascriptUnsupported`); they are never evaluated;
 - characters that are placed but not drawn: morph shapes, video, `DefineFont4` text;
 - editing input fields (`text:input`), selection, scrolling, HTML images, kerning and letter spacing, style sheets, and text fields used as masks;
 - button sounds (`DefineButtonSound`), menu tracking (`trackAsMenu` buttons behave as push buttons), masks during hit testing, and buttons nested inside buttons;

@@ -35,7 +35,7 @@ function standInCanvas() {
 // The layer of a diagnostic feature name.
 function layerOf(feature) {
   if (/^(tag:|actionscript:DoABC|timeline:)/.test(feature) || /^[A-Z]\w*\.\w+$/.test(feature)) return 'parser';
-  if (feature === 'avm1:objectValue' || /^avm1:GetURL/.test(feature) || /^(sound|load):/.test(feature)) return 'api';
+  if (feature === 'avm1:objectValue' || /^(sound|load|browser):/.test(feature)) return 'api';
   if (/^avm1:/.test(feature)) return 'vm';
   if (/^(render|text):/.test(feature)) return 'render';
   if (/^input:/.test(feature)) return 'input';

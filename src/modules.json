@@ -7,7 +7,7 @@
   "text/fonts.js",
   "text/html.js",
   "text/layout.js",
-  "avm1/decoder.js","avm1/values.js","avm1/properties.js","avm1/objects.js","avm1/variables.js","avm1/globals.js",
+  "avm1/decoder.js","avm1/values.js","avm1/properties.js","avm1/objects.js","avm1/variables.js","avm1/external.js","avm1/globals.js",
   "avm1/interpreter.js",
   "display/movie.js",
   "display/clip.js",
@@ -16,6 +16,7 @@
   "input/hit-test.js",
   "input/input.js",
   "render/canvas-renderer.js",
+  "browser/host.js",
   "retroflash.js",
   "browser/legacy-autoplay.js"
 ]

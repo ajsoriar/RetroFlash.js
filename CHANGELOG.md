@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- The browser bundle automatically replaces legacy Flash `<object>` and `<embed>` elements, loading the SWF and its resources from the same origin. The player logs initialization, load results, errors, SWF diagnostics, and unsupported features to the console.
+- **Browser interaction.** What a movie asks of the page goes to the new Player option `host`, after the cancelable events `navigate`, `call` and `fscommand`: `getURL` to `_self`, `_blank`, `_parent`, `_top` or a named window (with the variables of a `GET` or `POST`), `javascript:` URLs read as calls of page functions with literal arguments (never evaluated), `FSCommand`, and `flash.external.ExternalInterface` (`call`, `addCallback`, `available`, `objectID`; `player.callback()` calls back into the movie). `MovieClip.getURL` works. Loads send their variables with `GET`/`POST`. `player.load(input, { url, variables })` sets `_url` and FlashVars. `RetroFlash.createBrowserHost()` does all of it with `window.open`, `location`, forms, page functions and `fetch` under CORS, honouring `allowScriptAccess`, `allowNetworking`, `base` and an optional `rewriteUrl`. New diagnostics: `browser:noHost`, `browser:blocked`, `browser:invalidURL`, `browser:functionMissing`, `browser:callFailed`, `browser:javascriptUnsupported`, `browser:callbackMissing`, `load:cors`, `load:network`, `load:http`, `load:blocked`, `load:invalidURL`; `avm1:GetURL`, `avm1:GetURL2` and `load:sendVariables` are gone.
+- The browser bundle automatically replaces legacy Flash `<object>` and `<embed>` elements, playing them through the browser host with their `FlashVars`, `base`, `allowScriptAccess` and `allowNetworking`; ExternalInterface callbacks become methods of the element. Cross-origin SWFs and resources load when CORS allows them.
+- The reader's `actionscript:DoAction` reason now says the reader never runs code and the player does; the player no longer logs it. The player logs initialization, load results, errors, SWF diagnostics, and unsupported features to the console.
+- The Player emits and retains a bounded interaction log for requests between the movie and page, including direction, channel, outcome, and non-sensitive context. The development demo shows the latest 30 entries; URLs omit queries, and POST bodies and argument values are not retained.
 
 ### Fixed
 

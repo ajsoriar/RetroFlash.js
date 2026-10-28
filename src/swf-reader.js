@@ -44,7 +44,7 @@
 
   var REASON_INDEXED = 'Indexed only: offsets and raw bytes are available through getTagData(); the body is not decoded yet.';
   var REASON_UNKNOWN = 'Unknown tag code; skipped using its declared length.';
-  var REASON_AVM1 = 'AVM1 bytecode detected; the reader does not interpret it (RetroFlash.Player runs only a timeline-control subset).';
+  var REASON_AVM1 = 'AVM1 bytecode detected; the reader only indexes it and never runs it. RetroFlash.Player runs it with its own AVM1 interpreter and reports separately what it cannot run.';
   var REASON_AVM2 = 'AVM2 (ActionScript 3) bytecode detected; it is never executed.';
   var UNPARSED_REASONS = {
     clipActions: 'AVM1 clip event actions that could not be read; they never run.',

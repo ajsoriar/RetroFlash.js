@@ -19,8 +19,10 @@
   // Global names that exist in Flash Player but are not implemented: reading one gives an unknown value.
   var NOT_IMPLEMENTED = ['System', 'Date', 'Button', 'TextField', 'TextFormat', 'Selection', 'XML', 'XMLNode',
     'XMLSocket', 'LoadVars', 'SharedObject', 'LocalConnection', 'Camera', 'Microphone', 'Video', 'NetConnection',
-    'NetStream', 'ContextMenu', 'ContextMenuItem', 'MovieClipLoader', 'Accessibility', 'AsBroadcaster', 'flash',
+    'NetStream', 'ContextMenu', 'ContextMenuItem', 'MovieClipLoader', 'Accessibility', 'AsBroadcaster',
     'getVersion', 'ASnative', 'CustomActions', 'PrintJob', 'TextSnapshot'];
+  // Packages of the `flash` global other than flash.external: reading one gives an unknown value.
+  var FLASH_PACKAGES = ['display', 'filters', 'geom', 'net', 'text', 'ui'];
   // Key constants (Windows virtual key codes, as Flash Player uses).
   var KEY_CODES = { BACKSPACE: 8, CAPSLOCK: 20, CONTROL: 17, DELETEKEY: 46, DOWN: 40, END: 35, ENTER: 13, ESCAPE: 27,
     HOME: 36, INSERT: 45, LEFT: 37, PGDN: 34, PGUP: 33, RIGHT: 39, SHIFT: 16, SPACE: 32, TAB: 9, UP: 38 };
@@ -357,7 +359,11 @@
       getDepth: clipMethod(function (clip) { return clip.parent ? clip.displayObject().depth - M.SCRIPT_DEPTH : -16384; }),
       getBytesLoaded: clipMethod(function (clip) { return clip.env.swf.declaredLength || 0; }),
       getBytesTotal: clipMethod(function (clip) { return clip.env.swf.declaredLength || 0; }),
-      getURL: clipMethod(function (clip, args, rt) { rt.scheduler.report('avm1:GetURL', 'getURL is ignored: the player never navigates or opens windows.', 'MovieClip.getURL'); }),
+      // getURL(url, window, method): asks the host page to open the URL, sending this clip's variables with GET or POST.
+      getURL: clipMethod(function (clip, args, rt) {
+        var target = args.length > 1 && args[1] !== undefined ? str(args[1]) : '';
+        M.openURL(rt.scheduler, str(arg(args, 0)), target, methodCode(arg(args, 2)), clip, version);
+      }),
       // loadMovie(url, method), loadVariables(url, method) and unloadMovie(), through the host page's loader.
       loadMovie: clipMethod(function (clip, args, rt) { loadMethod(clip, args, 'movie', rt); }),
       loadVariables: clipMethod(function (clip, args, rt) { loadMethod(clip, args, 'variables', rt); }),
@@ -415,11 +421,16 @@
       }),
       getSWFVersion: clipMethod(function (clip) { return clip.env.version; })
     });
+    // The method argument of getURL, loadMovie and loadVariables: 1 for "GET", 2 for "POST" (any case), else 0.
+    function methodCode(v) {
+      var method = v === undefined ? '' : str(v).toUpperCase();
+      return method === 'GET' ? 1 : method === 'POST' ? 2 : 0;
+    }
     function loadMethod(clip, args, kind, rt) {
-      var method = str(arg(args, 1)).toUpperCase();
-      M.loadInto(clip, str(arg(args, 0)), kind, method === 'GET' ? 1 : method === 'POST' ? 2 : 0, function (feature, reason, detail) {
+      var method = methodCode(arg(args, 1));
+      M.loadInto(clip, str(arg(args, 0)), kind, method, function (feature, reason, detail) {
         rt.scheduler.report(feature, reason, 'MovieClip.' + (kind === 'variables' ? 'loadVariables' : 'loadMovie') + ': ' + detail);
-      });
+      }, method ? M.variablesOf(rt, clip, version) : null);
     }
     // A clip named by a value: a clip, or a target path from `clip`.
     function clipArg(clip, v) {
@@ -553,6 +564,35 @@
       getPan: function () { return 0; },
       getBytesLoaded: function () { return 0; },
       getBytesTotal: function () { return 0; }
+    });
+
+    // ---- flash.external.ExternalInterface: calls into the host page, and callbacks the page can call ----
+    var bridge = M.hostOf(scheduler), FlashPackage = new AvmObject(P.Object), External = new AvmObject(P.Object);
+    var ExternalInterface = new AvmObject(P.Object);
+    hide(G, 'flash', FlashPackage);
+    hide(FlashPackage, 'external', External);
+    FLASH_PACKAGES.forEach(function (name) { hide(FlashPackage, name, UNKNOWN_VALUE); });
+    hide(External, 'ExternalInterface', ExternalInterface);
+    hide(ExternalInterface, 'available', bridge.available);
+    hide(ExternalInterface, 'objectID', bridge.objectID);
+    hide(ExternalInterface, 'marshallExceptions', false);
+    methods(ExternalInterface, {
+      // call(name, args...): the page function's result, or null when the call could not be made.
+      call: function (rt, self, args) {
+        if (!bridge.available || !args.length) return null;
+        var result = bridge.call({
+          kind: 'external', name: str(args[0]), source: str(args[0]),
+          args: args.slice(1).map(function (v) { return M.toHostValue(rt, v); })
+        });
+        return result ? M.fromHostValue(rt, result.value) : null;
+      },
+      // addCallback(name, instance, method): the page can call method with instance as `this` (Player.callback).
+      addCallback: function (rt, self, args) {
+        var name = str(arg(args, 0)), method = arg(args, 2);
+        if (!bridge.available || !name || !isFunction(method)) return false;
+        bridge.addCallback(name, arg(args, 1), method);
+        return true;
+      }
     });
     return rt;
   }

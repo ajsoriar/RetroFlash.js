@@ -36,16 +36,19 @@
   /* The display context shared by every Clip of one movie: the dictionary, report(feature, reason, source),
      the limits (resolveLimits), `instances` (sprite and button instances created in the current step; the
      player resets it at each tick, seek and input event), `scripts`, the movie's ActionScheduler, and `loads`,
-     its LoadQueue (display/loader.js). options: { limits, actions, loader, maxFileBytes } (actions: false
-     queues no scripts; loader: the host page's loader function). */
+     its LoadQueue (display/loader.js), and `host`, the HostBridge to the page (avm1/external.js). options:
+     { limits, actions, loader, maxFileBytes, host, dispatch } (actions: false queues no scripts; loader: the host
+     page's loader function; host: the Player option `host`; dispatch: the Player's cancelable events). */
   function createEnv(movie, report, options) {
     options = options || {};
     var limits = options.limits || resolveLimits();
+    var scripts = new ActionScheduler(movie.swf, report, limits, options.actions);
+    scripts.host = new M.HostBridge(options.host, report, options.dispatch, options.interaction);
     return {
       characters: movie.characters, exports: movie.exports || Object.create(null), swf: movie.swf, version: movie.swf.version, url: '',
       report: report, limits: limits, instances: 0, instanceNames: 0, input: null, initActions: new Set(),
-      scripts: new ActionScheduler(movie.swf, report, limits, options.actions),
-      loads: M.LoadQueue ? new M.LoadQueue(options.loader, report, limits, options.maxFileBytes) : null
+      scripts: scripts, host: scripts.host,
+      loads: M.LoadQueue ? new M.LoadQueue(options.loader, report, limits, options.maxFileBytes, options.interaction) : null
     };
   }
   /* The context of a movie or image loaded into a clip: its own dictionary, exports, SWF version and URL; the

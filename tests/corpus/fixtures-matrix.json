@@ -61,7 +61,7 @@
       "api": {
         "status": "degraded",
         "features": {
-          "avm1:GetURL": 1
+          "browser:noHost": 1
         }
       },
       "render": {
@@ -183,6 +183,54 @@
       "steps": 0,
       "cachedBlocks": 0,
       "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-browser.swf",
+    "sha256": "bfc1409210da750f",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "degraded",
+        "features": {
+          "load:noLoader": 2
+        }
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 7,
+    "avm": 1,
+    "width": 400,
+    "height": 200,
+    "fps": 12,
+    "frames": 3,
+    "tags": 33,
+    "codeTags": {
+      "avm1": 4,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 10
+    },
+    "actions": {
+      "steps": 18,
+      "cachedBlocks": 3,
+      "decodedBytes": 158
     }
   },
   {

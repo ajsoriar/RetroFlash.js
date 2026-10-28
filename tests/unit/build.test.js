@@ -8,7 +8,7 @@ const { test, assert } = require('../support/harness');
 const root = path.join(__dirname, '..', '..');
 const modules = require(path.join(root, 'src', 'modules.json'));
 
-test('manifest: lists every source script once, the reader first and the public API last', () => {
+test('manifest: lists every source script once, the reader first and the public API last but for the markup bootstrap', () => {
   const found = [];
   (function walk(dir) {
     fs.readdirSync(path.join(root, 'src', dir), { withFileTypes: true }).forEach((e) => {
@@ -19,7 +19,8 @@ test('manifest: lists every source script once, the reader first and the public 
   })('');
   assert.deepStrictEqual(found.slice().sort(), modules.slice().sort());
   assert.strictEqual(modules[0], 'swf-reader.js');
-  assert.strictEqual(modules[modules.length - 1], 'retroflash.js');
+  // The legacy markup bootstrap runs after the public API exists; nothing else may follow retroflash.js.
+  assert.deepStrictEqual(modules.slice(modules.indexOf('retroflash.js')), ['retroflash.js', 'browser/legacy-autoplay.js']);
 });
 
 test('demo/player.html loads the scripts of the manifest, in order', () => {

@@ -8,10 +8,11 @@
    text (DefineText with embedded glyphs; DefineEditText with embedded or device fonts, word wrap, alignment
    and an HTML subset), AVM1 buttons (DefineButton/DefineButton2: states, hit areas, pointer and keyboard
    events), and AVM1 (ActionScript 1 and 2) in frame scripts, button actions and clip events. It never
-   evaluates JavaScript or navigates. The legacy markup bootstrap fetches only same-origin SWFs and resources;
-   otherwise movies, images and variables that scripts load come from the host page's `loader` option. Sound,
-   video and morph shapes are not drawn yet; see
-   getDiagnostics().unsupported.
+   evaluates JavaScript and never fetches or navigates by itself: what a movie asks of the page (getURL,
+   javascript: URLs, FSCommand, ExternalInterface, loads) goes to the host page's `host` and `loader`
+   options, after the cancelable events 'navigate', 'call' and 'fscommand'. RetroFlash.createBrowserHost()
+   gives a host that does it with the browser's own APIs; the legacy markup bootstrap uses it. Sound, video and
+   morph shapes are not drawn yet; see getDiagnostics().unsupported.
 */
 (function (global) {
   'use strict';
@@ -39,6 +40,7 @@
     var unsupported = swf.unsupported || [], diagnostics = (swf.diagnostics || []).filter(function (entry) {
       return entry.level !== 'info';
     });
+    if (player.options.actions) unsupported = unsupported.filter(function (entry) { return !PLAYER_RUNS[entry.feature]; });
     unsupported.slice(0, 10).forEach(function (entry) { player.logUnsupported(entry); });
     if (unsupported.length > 10) consoleWarn((unsupported.length - 10) + ' additional unsupported feature type(s) omitted.');
     diagnostics.slice(0, 8).forEach(function (entry) {
@@ -46,17 +48,32 @@
     });
     if (diagnostics.length > 8) consoleWarn((diagnostics.length - 8) + ' additional SWF diagnostic(s) omitted.');
   }
+  // FlashVars: name=value pairs (a query string, or an object's own properties) set on the root as strings.
+  function setRootVariables(root, variables) {
+    if (variables === undefined || variables === null || variables === '') return;
+    var pairs = typeof variables === 'string' ? M.parseVariables(variables.replace(/^\?/, ''))
+      : Object.keys(variables).map(function (k) { return [k, variables[k]]; });
+    var rt = M.runtimeOf(root.env.scripts);
+    pairs.forEach(function (p) { M.setMember(rt, root, String(p[0]), String(p[1])); });
+  }
   delete global.RetroFlashModules;
 
-  var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1 };
+  var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1, navigate: 1, call: 1, fscommand: 1, callbacks: 1, interaction: 1 };
+  var MAX_INTERACTION_LOG = 100;
+  // The reader lists ActionScript tags as unsupported (it never runs them); the player runs AVM1 itself.
+  var PLAYER_RUNS = { 'actionscript:DoAction': 1, 'actionscript:DoInitAction': 1 };
 
   function Player(options) {
     options = options || {};
     if (!options.canvas || typeof options.canvas.getContext !== 'function') throw playerError('INVALID_OPTION', 'options.canvas must be a <canvas> element');
     if (options.loader !== undefined && options.loader !== null && typeof options.loader !== 'function') throw playerError('INVALID_OPTION', 'options.loader must be a function');
+    if (options.host !== undefined && options.host !== null && typeof options.host !== 'object') throw playerError('INVALID_OPTION', 'options.host must be an object');
     this.canvas = options.canvas;
+    // host: what the movie asks of the page (navigate, call, fscommand, load, objectID; see src/README.md).
+    this.host = options.host || null;
     // loader(request) gives the bytes of a URL a script loads, or null to refuse it (see src/README.md).
-    this.loader = options.loader || null;
+    this.loader = options.loader || (this.host && typeof this.host.load === 'function' ? this.host.load.bind(this.host) : null);
+    this.movieOptions = {};
     this.options = {
       autoplay: !!options.autoplay,
       loop: options.loop !== false,
@@ -71,6 +88,8 @@
     this.limits = resolveLimits(options);
     this.state = 'idle';
     this.listeners = {};
+    this.interactionLog = [];
+    this.interactionSequence = 0;
     this.loggedErrors = Object.create(null);
     this.loggedUnsupported = Object.create(null);
     this.movie = null;
@@ -155,6 +174,56 @@
       try { fn(detail); } catch (err) { if (global.console) console.error(err); }
     });
   };
+  /* The cancelable events of what the movie asks of the page ('navigate', 'call', 'fscommand'): listeners get
+     the request first, and one that calls request.preventDefault() handles it, so the host is not asked.
+     Requests of a movie the player has left are dropped. */
+  Player.prototype.dispatch = function (env, type, request) {
+    if (this.env !== env || this.state === 'destroyed') return false;
+    this.emit(type, request);
+    return !request.defaultPrevented;
+  };
+  // A bounded, query-free history of the movie/page boundary. Values and POST bodies are never retained.
+  Player.prototype.recordInteraction = function (entry) {
+    var item = Object.freeze(Object.assign({ id: ++this.interactionSequence, time: Date.now() }, entry));
+    this.interactionLog.push(item);
+    if (this.interactionLog.length > MAX_INTERACTION_LOG) this.interactionLog.shift();
+    this.emit('interaction', item);
+    return item;
+  };
+  Player.prototype.getInteractionLog = function () { return this.interactionLog.slice(); };
+  Player.prototype.clearInteractionLog = function () { this.interactionLog.length = 0; return this; };
+  /* Calls a function the movie registered with ExternalInterface.addCallback(name, ...), as a page called the
+     plugin's method. `args` (an array) and the result are converted between JavaScript and AVM1 values. When no
+     script is running the call gets its own budget, and the movie is redrawn after it; a call made while the
+     movie is calling the page shares the running script's. A name the movie did not register is reported as
+     browser:callbackMissing and gives undefined. */
+  Player.prototype.callback = function (name, args) {
+    this.assertUsable();
+    if (!this.root) throw playerError('NOT_LOADED', 'No movie loaded');
+    var env = this.env, scripts = env.scripts, entry = env.host.callbacks.get(String(name));
+    var list = Array.isArray(args) ? args : args === undefined ? [] : [args];
+    if (!entry) {
+      this.recordInteraction({ direction: 'incoming', channel: 'ExternalInterface.callback', status: 'missing', name: String(name), argumentCount: list.length });
+      this.recordUnsupported('browser:callbackMissing', 'The page called a callback the movie did not register with ExternalInterface.addCallback.', String(name));
+      return undefined;
+    }
+    var rt = M.runtimeOf(scripts), outer = scripts.active === 0;
+    if (outer) { env.instances = 0; scripts.beginUpdate(); }
+    var value = scripts.invoke(entry.fn, entry.thisValue, list.map(function (a) { return M.fromHostValue(rt, a); }), 'callback ' + name);
+    var result = M.toHostValue(rt, value);
+    this.recordInteraction({ direction: 'incoming', channel: 'ExternalInterface.callback', status: 'called', name: String(name), argumentCount: list.length, resultType: result === null ? 'null' : typeof result });
+    if (outer && this.env === env && this.root) {
+      scripts.run();
+      if (this.input && this.input.afterTick()) scripts.run();
+      this.render();
+      this.emit('frame', this.root.frame);
+    }
+    return result;
+  };
+  // The names the movie registered with ExternalInterface.addCallback.
+  Player.prototype.getCallbacks = function () {
+    return this.env && this.env.host ? Array.from(this.env.host.callbacks.keys()) : [];
+  };
   Player.prototype.logError = function (error) {
     var message = error && error.message ? error.message : String(error || 'Unknown player error');
     var key = (error && error.code ? error.code + ':' : '') + message;
@@ -188,10 +257,16 @@
   Player.prototype.assertUsable = function () {
     if (this.state === 'destroyed') throw playerError('DESTROYED', 'The player has been destroyed');
   };
-  // Only the latest call wins: a load that is superseded by another load(), or by destroy(), resolves to null
-  // without changing the player, even if it fails. Its diagnostics are dropped from that moment on.
-  Player.prototype.load = async function (input) {
+  /* Only the latest call wins: a load that is superseded by another load(), or by destroy(), resolves to null
+     without changing the player, even if it fails. Its diagnostics are dropped from that moment on.
+     options: { url (the movie's URL, its _url), variables (FlashVars: a query string or an object, set on the
+     root as strings before its first frame) }. */
+  Player.prototype.load = async function (input, options) {
     this.assertUsable();
+    if (options !== undefined && options !== null && typeof options !== 'object') throw playerError('INVALID_OPTION', 'load options must be an object');
+    var variables = options ? options.variables : undefined;
+    if (variables !== undefined && variables !== null && typeof variables !== 'string' && typeof variables !== 'object') throw playerError('INVALID_OPTION', 'load options.variables must be a string or an object');
+    var movieOptions = { url: options && options.url ? String(options.url) : '', variables: variables };
     this.loggedErrors = Object.create(null);
     this.loggedUnsupported = Object.create(null);
     if (!global.SWFReader) throw playerError('MISSING_READER', 'Load swf-reader.js before retroflash.js');
@@ -221,6 +296,7 @@
       await movie.decodeBitmaps({ maxPixels: this.limits.maxBitmapPixels, remaining: this.limits.maxTotalBitmapPixels }, report);
       if (superseded()) { movie.release(); return null; }
       this.movie = movie;
+      this.movieOptions = movieOptions;
       this.fps = swf.fps > 0 ? swf.fps : 12;
       if (!(swf.fps > 0)) this.recordUnsupported('timeline:zeroFps', 'The file declares 0 fps; playing at 12 fps.', 'header');
       this.restart();
@@ -250,9 +326,15 @@
   // Fresh root timeline at frame 1, with its frame scripts run (as when the movie starts).
   Player.prototype.restart = function () {
     this.closeLoads();
-    var self = this, env = this.env = createEnv(this.movie, this.report, {
-      actions: this.options.actions, limits: this.limits, loader: this.loader, maxFileBytes: this.options.maxFileBytes
+    var self = this, previous = this.env;
+    var env = this.env = createEnv(this.movie, this.report, {
+      actions: this.options.actions, limits: this.limits, loader: this.loader, maxFileBytes: this.options.maxFileBytes,
+      host: this.host, dispatch: function (type, request) { return self.dispatch(env, type, request); },
+      interaction: function (entry) { if (self.env === env) self.recordInteraction(entry); }
     });
+    env.url = this.movieOptions.url || '';
+    env.host.onCallbacks = function (names) { if (self.env === env) self.emit('callbacks', names); };
+    if (previous && previous.host && previous.host.callbacks.size) this.emit('callbacks', []);
     // A load that finishes while the movie is not playing is shown at once; while playing, at the next frame.
     env.loads.onSettled = function () {
       if (self.env !== env || !self.root || self.state === 'playing' || self.state === 'loading' || self.state === 'destroyed') return;
@@ -271,6 +353,7 @@
     this.env.scripts.clock = function () { return now() - started; }; // getTimer: milliseconds since the start
     this.root = new Clip(this.env, this.movie.root, 0, null);
     this.root.loop = this.options.loop;
+    setRootVariables(this.root, this.movieOptions.variables);
     this.root.gotoFrame(1);
     this.env.scripts.run();
     var previous = this.input;
@@ -427,6 +510,7 @@
     version: VERSION,
     Player: Player,
     defaultLimits: DEFAULT_LIMITS,
+    createBrowserHost: M.createBrowserHost,
     // Building blocks of every module, exposed for tests and tooling; not a stable API.
     internals: Object.freeze(Object.assign({}, M))
   });

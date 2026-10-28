@@ -1,6 +1,6 @@
 /* RetroFlash.js - Loading movies, images and variables into clips (loadMovie, unloadMovie, loadVariables).
-   The player never fetches anything: the host page gives it a loader function (the Player option `loader`),
-   which decides whether a URL may be loaded and returns its bytes. */
+   The player never fetches anything: the host page gives it a loader function (the Player option `loader`, or
+   the `load` method of its `host`), which decides whether a URL may be loaded and returns its bytes. */
 (function (global) {
   'use strict';
 
@@ -53,18 +53,39 @@
     return pairs;
   }
 
+  // A drawable image a host gave instead of bytes (an HTMLImageElement, ImageBitmap or canvas), or null.
+  function drawableOf(data) {
+    if (!data || typeof data !== 'object' || data instanceof ArrayBuffer || ArrayBuffer.isView(data) || typeof data.arrayBuffer === 'function') return null;
+    var width = data.naturalWidth || data.width, height = data.naturalHeight || data.height;
+    var drawable = typeof data.naturalWidth === 'number' || typeof data.getContext === 'function' || typeof data.close === 'function';
+    return drawable && width > 0 && height > 0 ? { width: width, height: height } : null;
+  }
+  // Errors a host loader throws, by `code`: [feature, reason]. Any other error is load:failed.
+  var LOAD_ERRORS = {
+    LOAD_REFUSED: ['load:refused', 'The host page did not give a URL a script loads.'],
+    LOAD_CORS: ['load:cors', 'The server did not let this page read a URL a script loads (CORS), or it could not be reached; nothing was loaded.'],
+    LOAD_NETWORK: ['load:network', 'A URL a script loads could not be reached; nothing was loaded.'],
+    LOAD_HTTP: ['load:http', 'The server answered a URL a script loads with an error; nothing was loaded.'],
+    LOAD_BLOCKED: ['load:blocked', 'The host page does not let the movie load URLs (allowNetworking); nothing was loaded.'],
+    INVALID_URL: ['load:invalidURL', 'A script loads a URL that is not valid; nothing was loaded.']
+  };
+
   /* The loads of one movie (env.loads). request() asks the host for a URL; what arrives is kept until apply(),
      which the player calls between frames, so content changes at a frame boundary as in Flash Player.
-     - host(request): request is { url, type: 'movie' | 'variables', method: null | 'GET' | 'POST' }; it returns
-       (or resolves to) a Uint8Array, an ArrayBuffer, a typed array, a Blob, or, for variables, a string. null or
-       undefined refuses the URL. The URL is passed as the script wrote it; the host resolves it.
+     - host(request): request is { url, type: 'movie' | 'variables', method: null | 'GET' | 'POST' }; with a
+       method it also has `variables` ([[name, value], ...], sent as Flash Player sends them: added to the URL
+       for GET, and as `body`, URL-encoded, for POST). It returns (or resolves to) a Uint8Array, an ArrayBuffer,
+       a typed array, a Blob, or, for variables, a string; for a movie load it may also give an image the
+       browser already decoded (HTMLImageElement, ImageBitmap or canvas). null or undefined refuses the URL.
+       The URL is passed as the script wrote it; the host resolves it. A host error with a `code` of
+       LOAD_ERRORS is reported as such.
      - Movies are SWF files; images are JPEG, PNG or GIF files. Their bitmaps share one pixel budget
        (limits.maxBitmapPixels per image, limits.maxTotalBitmapPixels for everything loaded at once), given back
-       when the content is unloaded.
-     - Variables are never sent: a load with GET or POST is made without them, and reported. */
-  function LoadQueue(host, report, limits, maxFileBytes) {
+       when the content is unloaded. */
+  function LoadQueue(host, report, limits, maxFileBytes, interaction) {
     this.host = typeof host === 'function' ? host : null;
     this.report = report;
+    this.interaction = typeof interaction === 'function' ? interaction : null;
     this.maxFileBytes = maxFileBytes;
     this.pixels = { maxPixels: limits.maxBitmapPixels, remaining: limits.maxTotalBitmapPixels };
     this.pending = 0;
@@ -79,18 +100,37 @@
   }
   /* loadMovie (kind 'movie') or loadVariables (kind 'variables') of `url` into `clip`. A movie load empties the
      clip at once; an empty URL only empties it (unloadMovie). A newer movie load into the same clip, or an
-     unload, cancels the older one. Without a host loader nothing changes. */
-  LoadQueue.prototype.request = function (clip, url, kind, method) {
+     unload, cancels the older one. Without a host loader nothing changes. `variables` are the pairs a load with
+     a method (1 GET, 2 POST) sends. */
+  LoadQueue.prototype.request = function (clip, url, kind, method, variables) {
     if (kind === 'movie' && url === '') {
       clip.loadToken = ++this.serial;
       clip.clearContent();
       return;
     }
-    if (!this.host) return this.report('load:noLoader', 'Loading a URL needs a loader from the host page (the Player option `loader`); nothing was loaded.', url);
-    if (this.pending >= MAX_PENDING_LOADS) return this.report('load:limit', 'More than ' + MAX_PENDING_LOADS + ' loads were waiting at once; this one was dropped.', url);
-    if (method) this.report('load:sendVariables', 'Variables are never sent with a load; the URL was loaded without them.', url);
-    var self = this, token = ++this.serial, version = clip.env.version;
-    var request = Object.freeze({ url: url, type: kind, method: METHODS[method] || null });
+    var self = this, request = { url: url, type: kind, method: METHODS[method] || null };
+    if (request.method) M.addForm(request, variables || []);
+    url = request.url;
+    request = Object.freeze(request);
+    var interaction = {
+      direction: 'outgoing', channel: 'load', status: 'requested', url: String(url).split(/[?#]/)[0],
+      resourceType: kind, method: request.method || 'GET', variableCount: request.variables ? request.variables.length : 0
+    };
+    if (!this.host) {
+      interaction.status = 'no-host';
+      if (this.interaction) this.interaction(interaction);
+      return this.report('load:noLoader', 'Loading a URL needs a loader from the host page (the Player option `loader` or `host.load`); nothing was loaded.', url);
+    }
+    if (this.pending >= MAX_PENDING_LOADS) {
+      interaction.status = 'limited';
+      if (this.interaction) this.interaction(interaction);
+      return this.report('load:limit', 'More than ' + MAX_PENDING_LOADS + ' loads were waiting at once; this one was dropped.', url);
+    }
+    var token = ++this.serial, version = clip.env.version;
+    if (this.interaction) this.interaction({
+      direction: 'outgoing', channel: 'load', status: 'requested', url: String(url).split(/[?#]/)[0],
+      resourceType: kind, method: request.method || 'GET', variableCount: request.variables ? request.variables.length : 0
+    });
     if (kind === 'movie') {
       clip.loadToken = token;
       clip.clearContent();
@@ -103,6 +143,11 @@
       .then(function (outcome) {
         self.pending--;
         Object.assign(outcome, { clip: clip, token: token, kind: kind, url: url });
+        if (self.interaction) self.interaction({
+          direction: 'outgoing', channel: 'load', status: self.closed ? 'discarded' : outcome.error ? 'failed' : 'received',
+          url: String(url).split(/[?#]/)[0], resourceType: kind, method: request.method || 'GET',
+          variableCount: request.variables ? request.variables.length : 0, errorCode: outcome.error && outcome.error.code
+        });
         if (self.closed) discard(outcome, self);
         else self.done.push(outcome);
         if (!self.pending) self.waiters.splice(0).forEach(function (resolve) { resolve(); });
@@ -114,6 +159,12 @@
     var self = this;
     if (data === null || data === undefined) return Promise.reject(loadError('LOAD_REFUSED', 'The host page did not give this URL.'));
     if (kind === 'variables' && typeof data === 'string') return Promise.resolve({ variables: parseVariables(data) });
+    var drawable = kind === 'movie' && drawableOf(data);
+    if (drawable) {
+      // Decoded by the browser (for example a cross-origin image the page may show but not read).
+      var reserved = M.reservePixels(this.pixels, drawable.width, drawable.height);
+      return Promise.resolve({ image: { source: data, width: drawable.width, height: drawable.height, reserved: reserved } });
+    }
     return toBytes(data).then(function (bytes) {
       if (self.maxFileBytes && bytes.length > self.maxFileBytes) throw loadError('LOAD_TOO_LARGE', bytes.length + ' bytes exceed options.maxFileBytes');
       if (kind === 'variables') return { variables: parseVariables(decodeText(bytes, version)) };
@@ -136,9 +187,8 @@
       var clip = outcome.clip, result = outcome.result;
       if (clip.removed || (outcome.kind === 'movie' && clip.loadToken !== outcome.token)) return discard(outcome, self);
       if (outcome.error) {
-        var refused = outcome.error.code === 'LOAD_REFUSED';
-        self.report(refused ? 'load:refused' : 'load:failed', refused ? 'The host page did not give a URL a script loads.' : 'A loaded URL could not be used.',
-          outcome.url + (refused ? '' : ': ' + outcome.error.message));
+        var code = outcome.error.code, known = LOAD_ERRORS[code] || ['load:failed', 'A loaded URL could not be used.'];
+        self.report(known[0], known[1], outcome.url + (code === 'LOAD_REFUSED' ? '' : ': ' + outcome.error.message));
         return;
       }
       changed = true;
@@ -176,11 +226,12 @@
   }
 
   /* Starts a load from a script: GetURL/GetURL2 with a level or clip target, and the MovieClip methods.
-     `clip` is the target, or null when it names nothing. Level targets other than _level0 are not supported. */
-  function loadInto(clip, url, kind, method, report) {
+     `clip` is the target, or null when it names nothing. Level targets other than _level0 are not supported.
+     `variables` are what a load with a method sends. */
+  function loadInto(clip, url, kind, method, report, variables) {
     if (!clip) return report('avm1:targetNotFound', 'The target of a load does not exist; nothing was loaded.', url);
-    if (!clip.env.loads) return report('load:noLoader', 'Loading a URL needs a loader from the host page (the Player option `loader`); nothing was loaded.', url);
-    clip.env.loads.request(clip, url, kind, method);
+    if (!clip.env.loads) return report('load:noLoader', 'Loading a URL needs a loader from the host page (the Player option `loader` or `host.load`); nothing was loaded.', url);
+    clip.env.loads.request(clip, url, kind, method, variables);
   }
   // The level number of a "_levelN" target, or -1.
   function levelOf(target) {

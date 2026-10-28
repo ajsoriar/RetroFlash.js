@@ -15,7 +15,8 @@
     LimitError = M.LimitError, createRuntime = M.createRuntime, gotoFrameValue = M.gotoFrameValue,
     MAX_ARRAY_INDEX = M.MAX_ARRAY_INDEX, startDrag = M.startDrag, stopDrag = M.stopDrag;
 
-  /* A controlled interpreter. It never evaluates JavaScript, never navigates and never touches the page. It
+  /* A controlled interpreter. It never evaluates JavaScript and never touches the page itself: navigation,
+     javascript: URLs, FSCommand and ExternalInterface go to the host page's `host` (avm1/external.js). It
      runs AVM1 bytecode: timelines and movie clips, the stack and registers, operators, variables, control
      flow, functions, objects, with, try/catch/finally, for..in, dragging and the timer. Clip events, timers
      and listeners are queued with the frame scripts. Unknown action codes are reported and skipped. Loops and
@@ -154,6 +155,8 @@
     this.keys = new Set();     // key codes held down (Key.isDown), set by the input controller
     this.lastKey = { code: 0, ascii: 0 }; // Key.getCode, Key.getAscii
     this.mouseHidden = false;  // Mouse.hide
+    this.host = null;          // the HostBridge to the page (avm1/external.js), set by createEnv
+    this.active = 0;           // blocks and calls running now (more than one when the page calls back into the movie)
   }
   // The most timers a movie can have at once; setInterval and setTimeout past it give undefined.
   var MAX_TIMERS = 10000;
@@ -291,8 +294,9 @@
   /* Runs `body` for one block or handler: an exception that leaves it (an uncaught Throw, too many nested
      calls, a runtime limit) ends it and is reported. */
   function guarded(scheduler, source, body) {
-    var previous = M.currentRuntime;
-    M.currentRuntime = runtimeOf(scheduler);
+    var previous = M.currentRuntime, rt = runtimeOf(scheduler), depth = rt.callDepth;
+    M.currentRuntime = rt;
+    scheduler.active++;
     try {
       body();
     } catch (err) {
@@ -302,9 +306,18 @@
       else throw err;
     } finally {
       M.currentRuntime = previous;
-      scheduler.runtime.callDepth = 0;
+      scheduler.active--;
+      rt.callDepth = depth;
     }
   }
+  /* Calls an AVM1 function now and gives its result (undefined when it fails): a callback the page calls
+     (ExternalInterface.addCallback). It shares the current update's budget; the caller opens one when no
+     script is running. */
+  ActionScheduler.prototype.invoke = function (fn, thisValue, args, label) {
+    var result, self = this;
+    guarded(this, label || 'callback', function () { result = callValue(self, fn, thisValue, args, null); });
+    return result;
+  };
   /* Runs one action block in the context of `clip` (the timeline that holds a frame script, or a button's
      parent). A block that decoded no record (an empty block, or one met after the decoding budget was spent)
      is not kept in the cache: the budget does not pay for it. */
@@ -425,8 +438,22 @@
   // A load into "_levelN" (loadMovieNum, loadVariablesNum): _level0 is the root; other levels are not supported.
   Activation.prototype.loadLevel = function (url, target, kind, method) {
     url = toAvmString(url, this.version);
-    if (M.levelOf(target) === 0) M.loadInto(this.root, url, kind, method, this.report.bind(this));
+    if (M.levelOf(target) === 0) M.loadInto(this.root, url, kind, method, this.report.bind(this), this.formVariables(method));
     else this.report('load:level', 'Movies loaded into levels other than _level0 are not supported yet; nothing was loaded.', target + ' ← ' + url);
+    return true;
+  };
+  /* What a request with a method sends: the variables of the innermost timeline or function locals on the
+     scope chain (`with` objects are passed over), as Flash Player sends them. Null without a method. */
+  Activation.prototype.formScope = function () {
+    for (var i = this.scopes.length - 1; i >= 0; i--) if (this.scopes[i].kind !== 'with') return this.scopes[i].obj;
+    return this.clip;
+  };
+  Activation.prototype.formVariables = function (method) {
+    return method ? M.variablesOf(this.rt, this.formScope(), this.version) : null;
+  };
+  // getURL to a window, an FSCommand or a javascript: URL (avm1/external.js).
+  Activation.prototype.openURL = function (url, target, method) {
+    M.openURL(this.scheduler, url, target, method, this.formScope(), this.version);
     return true;
   };
   // The timeline that GotoFrame2, CloneSprite, RemoveSprite and Call address: the target, or the root without one.
@@ -841,27 +868,34 @@
       case 0x28: // EndDrag
         if (this.clip) stopDrag(this.clip.env);
         return true;
-      case 0x83: // GetURL: a "_levelN" target loads a movie there (loadMovieNum); anything else would navigate.
+      case 0x83: // GetURL: a "_levelN" target loads a movie there (loadMovieNum); anything else goes to the page.
         if (action.error) return this.malformed();
         if (M.levelOf(args.target) >= 0) return this.loadLevel(args.url, args.target, 'movie', 0);
-        this.report('avm1:GetURL', 'GetURL is ignored: the player never navigates or opens windows.', args.url);
-        return true;
+        return this.openURL(args.url, args.target, 0);
       case 0x9a: // GetURL2: the target is above the URL. A clip target (or a level) loads into it.
         if (action.error) return this.malformed();
         b = this.pop();
         a = this.pop();
         if (a === UNKNOWN_VALUE || b === UNKNOWN_VALUE) return this.unknownValue(action);
+        a = toAvmString(a, version);
+        // An FSCommand (fscommand(command, args)) carries its arguments in the target.
+        if (M.fsCommandOf(a) !== null) return this.openURL(a, toAvmString(b, version), 0);
         c = args.loadVariables ? 'variables' : 'movie';
+        n = args.sendVarsMethod;
         if (args.loadTarget) {
           b = this.clipOf(b, this.target || this.clip, true);
           if (b === UNKNOWN_VALUE) return this.unknownValue(action);
-          M.loadInto(b, toAvmString(a, version), c, args.sendVarsMethod, this.report.bind(this));
+          M.loadInto(b, a, c, n, this.report.bind(this), this.formVariables(n));
+          return true;
+        }
+        // loadVariables(url, _root) without the clip flag loads into the root; any other clip value opens a window.
+        if (args.loadVariables && isClip(b) && b === this.root) {
+          M.loadInto(b, a, c, n, this.report.bind(this), this.formVariables(n));
           return true;
         }
         b = toAvmString(b, version);
-        if (M.levelOf(b) >= 0) return this.loadLevel(a, b, c, args.sendVarsMethod);
-        this.report('avm1:GetURL2', 'GetURL2 is ignored: the player never navigates or opens windows.', toAvmString(a, version));
-        return true;
+        if (M.levelOf(b) >= 0) return this.loadLevel(a, b, c, n);
+        return this.openURL(a, b, n);
 
       // Functions and calls
       case 0x9b: case 0x8e: // DefineFunction, DefineFunction2

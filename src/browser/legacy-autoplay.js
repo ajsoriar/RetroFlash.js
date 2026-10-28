@@ -1,9 +1,13 @@
 /* RetroFlash.js - automatic playback for legacy Flash object/embed markup.
-   Only same-origin HTTP(S) resources are loaded; cross-origin URLs and redirects are refused. */
+   Each Flash <object> or <embed> is replaced by a canvas that plays its SWF, embedded as the plugin was: the
+   browser host (RetroFlash.createBrowserHost) opens the pages the movie asks for, calls page functions for
+   javascript: URLs and ExternalInterface, sends FSCommands to `<id>_DoFSCommand`, and loads what scripts load
+   under the browser's CORS rules. The element's parameters are honoured: movie/src/data, base, FlashVars,
+   allowScriptAccess, allowNetworking, bgcolor. Optional page settings: window.RetroFlashConfig (see
+   src/README.md, "Legacy markup"). */
 (function (global) {
   'use strict';
 
-  var MAX_FILE_BYTES = 50 * 1024 * 1024;
   var FLASH_CLASSID = 'd27cdb6e-ae6d-11cf-96b8-444553540000';
 
   function log(message) {
@@ -14,14 +18,15 @@
 
   if (global.RetroFlash) log('v' + global.RetroFlash.version + ' ready — Canvas 2D player.');
 
-  function movieParam(object) {
-    var params = object.getElementsByTagName('param');
+  // A parameter of the element: a <param name> (any case) of an <object>, else an attribute of it or its <embed>.
+  function paramOf(element, name) {
+    var params = element.getElementsByTagName('param'), lower = name.toLowerCase();
     for (var i = 0; i < params.length; i++) {
-      if (String(params[i].getAttribute('name') || '').toLowerCase() === 'movie') {
-        return params[i].getAttribute('value') || '';
-      }
+      if (String(params[i].getAttribute('name') || '').toLowerCase() === lower) return params[i].getAttribute('value') || '';
     }
-    return '';
+    if (element.hasAttribute(name)) return element.getAttribute(name) || '';
+    var embeds = element.getElementsByTagName('embed');
+    return embeds.length && embeds[0].hasAttribute(name) ? embeds[0].getAttribute(name) || '' : '';
   }
 
   function embedSource(element) {
@@ -30,7 +35,7 @@
   }
 
   function sourceOf(element) {
-    return movieParam(element) || element.getAttribute('data') || element.getAttribute('src') || embedSource(element);
+    return paramOf(element, 'movie') || element.getAttribute('data') || element.getAttribute('src') || embedSource(element);
   }
 
   function isFlashElement(element) {
@@ -40,26 +45,10 @@
       /\.swf(?:[?#]|$)/i.test(sourceOf(element));
   }
 
-  function sameOriginUrl(value, base) {
-    var location = global.location;
-    if (!location || (location.protocol !== 'http:' && location.protocol !== 'https:')) {
-      throw new Error('Serve this page over HTTP or HTTPS to load a SWF automatically.');
-    }
-    var url = new URL(value, base || location.href);
-    if (url.origin !== location.origin) throw new Error('Only same-origin SWF resources can be loaded automatically.');
-    return url;
-  }
-
-  async function fetchBytes(url) {
-    var response = await global.fetch(url.href, {
-      mode: 'same-origin', credentials: 'same-origin', redirect: 'error'
-    });
-    if (!response.ok) throw new Error('HTTP ' + response.status + ' while loading ' + url.pathname);
-    var length = Number(response.headers.get('content-length'));
-    if (length > MAX_FILE_BYTES) throw new Error('The file exceeds the 50 MiB automatic-load limit.');
-    var bytes = await response.arrayBuffer();
-    if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('The file exceeds the 50 MiB automatic-load limit.');
-    return bytes;
+  // The name the page knows the movie by: the id, else the name of the element or its <embed>.
+  function objectIdOf(element) {
+    var embeds = element.getElementsByTagName('embed');
+    return element.id || element.getAttribute('name') || (embeds.length && (embeds[0].id || embeds[0].getAttribute('name'))) || '';
   }
 
   function numericDimension(element, name, fallback) {
@@ -70,14 +59,20 @@
     return dimension > 0 ? Math.max(1, Math.round(dimension)) : fallback;
   }
 
-  function backgroundOf(element) {
-    var params = element.getElementsByTagName('param');
-    for (var i = 0; i < params.length; i++) {
-      if (String(params[i].getAttribute('name') || '').toLowerCase() === 'bgcolor') {
-        return params[i].getAttribute('value') || '';
-      }
-    }
-    return element.getAttribute('bgcolor') || '';
+  /* allowScriptAccess as the plugin read it: "always" allows scripting the page, "never" refuses it, and
+     "sameDomain" (the default) allows it when the SWF comes from the page's origin. */
+  function scriptAccessOf(value, swfUrl) {
+    value = String(value || 'sameDomain').toLowerCase();
+    if (value === 'always') return true;
+    if (value === 'never') return false;
+    return swfUrl.origin === global.location.origin;
+  }
+
+  // FlashVars, then the query string of the movie URL, as the plugin passed them to the root.
+  function flashVarsOf(element, swfUrl) {
+    var vars = paramOf(element, 'flashvars');
+    var query = swfUrl.search.replace(/^\?/, '');
+    return [vars, query].filter(Boolean).join('&');
   }
 
   function showError(canvas, error, source, report) {
@@ -97,12 +92,33 @@
     context.fillText(error.message.slice(0, 90), canvas.width / 2, canvas.height / 2 + 14);
   }
 
+  /* Callbacks the movie registers with ExternalInterface.addCallback become methods of the canvas, as they were
+     methods of the plugin element: document.getElementById(id).name(args...). */
+  function exposeCallbacks(canvas, player) {
+    var exposed = [];
+    player.on('callbacks', function (names) {
+      exposed.forEach(function (name) { if (names.indexOf(name) < 0) delete canvas[name]; });
+      exposed = names.filter(function (name) { return !(name in canvas) || exposed.indexOf(name) >= 0; });
+      exposed.forEach(function (name) {
+        canvas[name] = function () { return player.callback(name, Array.prototype.slice.call(arguments)); };
+      });
+    });
+  }
+
+  function logInteractions(player) {
+    player.on('navigate', function (r) { log('getURL ' + r.url + (r.target ? ' → ' + r.target : '') + (r.method ? ' (' + r.method + ')' : '')); });
+    player.on('call', function (r) { log((r.kind === 'javascript' ? 'javascript: ' : 'ExternalInterface.call ') + (r.name || r.source)); });
+    player.on('fscommand', function (r) { log('FSCommand ' + r.command + (r.args ? ' ' + r.args : '')); });
+  }
+
   function mount(element) {
     if (!isFlashElement(element)) return;
     var source = sourceOf(element);
     if (!source) return;
+    var config = global.RetroFlashConfig || {};
+    var objectId = objectIdOf(element);
 
-    log('Detected <' + element.tagName.toLowerCase() + '> ' + (element.id ? '#' + element.id + ' ' : '') +
+    log('Detected <' + element.tagName.toLowerCase() + '> ' + (objectId ? '#' + objectId + ' ' : '') +
       'for "' + source + '" (' + numericDimension(element, 'width', 300) + 'x' +
       numericDimension(element, 'height', 150) + ').');
 
@@ -112,30 +128,44 @@
     canvas.style.width = canvas.width + 'px';
     canvas.style.height = canvas.height + 'px';
     canvas.style.display = 'inline-block';
-    canvas.style.backgroundColor = backgroundOf(element);
+    canvas.style.backgroundColor = paramOf(element, 'bgcolor');
     canvas.setAttribute('role', 'img');
     canvas.setAttribute('aria-label', element.getAttribute('title') || 'Película Flash');
     if (element.id) canvas.id = element.id;
     if (element.className) canvas.className = element.className;
     element.parentNode.replaceChild(canvas, element);
+    // An <embed name> was reachable as document[name]; the canvas takes its place.
+    if (objectId && !element.id && !(objectId in global.document)) global.document[objectId] = canvas;
 
     var playerReportedError = false;
     try {
-      var swfUrl = sameOriginUrl(source, global.location.href);
-      var player = new global.RetroFlash.Player({
-        canvas: canvas,
-        autoplay: true,
-        loader: function (request) {
-          var resourceUrl = sameOriginUrl(request.url, swfUrl.href);
-          return fetchBytes(resourceUrl);
-        }
+      var location = global.location;
+      if (!location || (location.protocol !== 'http:' && location.protocol !== 'https:')) {
+        throw new Error('Serve this page over HTTP or HTTPS to load a SWF automatically.');
+      }
+      var swfUrl = new URL(source, location.href);
+      var base = paramOf(element, 'base');
+      var host = global.RetroFlash.createBrowserHost({
+        objectID: objectId,
+        base: config.base || (base && base !== '.' ? new URL(base, location.href).href : base === '.' ? swfUrl.href : undefined),
+        allowScriptAccess: config.allowScriptAccess !== undefined ? config.allowScriptAccess !== false : scriptAccessOf(paramOf(element, 'allowScriptAccess'), swfUrl),
+        allowNetworking: config.allowNetworking || paramOf(element, 'allowNetworking') || 'all',
+        rewriteUrl: config.rewriteUrl
       });
+      var player = new global.RetroFlash.Player({ canvas: canvas, autoplay: config.autoplay !== false, host: host });
       player.on('error', function () { playerReportedError = true; });
-      log('Loading "' + swfUrl.pathname.split('/').pop() + '".');
-      fetchBytes(swfUrl).then(function (bytes) {
-        return player.load(bytes);
+      exposeCallbacks(canvas, player);
+      logInteractions(player);
+      canvas.retroflashPlayer = player;
+      if (typeof global.CustomEvent === 'function') {
+        canvas.dispatchEvent(new global.CustomEvent('retroflash:player', { bubbles: true, detail: { player: player, element: element } }));
+      }
+      var name = swfUrl.pathname.split('/').pop();
+      log('Loading "' + name + '".');
+      host.load({ url: swfUrl.href, type: 'movie', method: null }).then(function (bytes) {
+        return player.load(bytes, { url: swfUrl.href, variables: flashVarsOf(element, swfUrl) });
       }).then(function (info) {
-        if (info) log('Loaded "' + swfUrl.pathname.split('/').pop() + '": SWF ' + info.version + ', ' +
+        if (info) log('Loaded "' + name + '": SWF ' + info.version + ', ' +
           info.width + 'x' + info.height + ', ' + info.fps + ' fps, ' + info.frameCount + ' frames.');
       }).catch(function (error) {
         showError(canvas, error, source, !playerReportedError);

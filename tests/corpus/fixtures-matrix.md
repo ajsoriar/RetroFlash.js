@@ -1,9 +1,10 @@
 | File | SWF | Frames | AVM1 steps | Status | Parser | VM | API | Render | Input | Features |
 |---|---|---|---|---|---|---|---|---|---|---|
 | cws-minimal.swf | 10 | 1 | 0 | ok | ok | ok | ok | ok | ok |  |
-| fws-actions.swf | 6 | 6 | 13 | partial | ok | ok | partial | ok | ok | avm1:GetURL |
+| fws-actions.swf | 6 | 6 | 13 | partial | ok | ok | partial | ok | ok | browser:noHost |
 | fws-animation.swf | 8 | 48 | 0 | ok | ok | ok | ok | ok | ok |  |
 | fws-bitmaps.swf | 8 | 1 | 0 | ok | ok | ok | ok | ok | ok |  |
+| fws-browser.swf | 7 | 3 | 18 | partial | ok | ok | partial | ok | ok | load:noLoader ×2 |
 | fws-buttons.swf | 6 | 2 | 8 | ok | ok | ok | ok | ok | ok |  |
 | fws-game.swf | 6 | 1 | 1808 | ok | ok | ok | ok | ok | ok |  |
 | fws-minimal.swf | 10 | 1 | 0 | ok | ok | ok | ok | ok | ok |  |

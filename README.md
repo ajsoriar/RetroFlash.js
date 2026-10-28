@@ -18,7 +18,7 @@ RetroFlash.js plays SWF animations on Canvas 2D:
   - `DefineText` drawn with the glyph outlines of `DefineFont`/`DefineFont2`/`DefineFont3`;
   - `DefineEditText` fields with embedded or device fonts, word wrap, alignment, margins, borders, `AutoSize`, and an HTML subset;
 - **buttons** (`DefineButton`/`DefineButton2`): up/over/down states, hit areas, the hand cursor, and pointer and keyboard events with their actions;
-- a controlled **AVM1 subset** for frame scripts and button actions. It never evaluates JavaScript or navigates. It covers:
+- a controlled **AVM1 subset** for frame scripts and button actions. Browser interactions go through explicit host APIs; SWF-provided text is never evaluated as JavaScript. It covers:
   - timeline control: `stop`, `play`, `nextFrame`/`prevFrame`, `gotoAndPlay`/`gotoAndStop` by frame or label, and `tellTarget`/`setTarget`;
   - the stack, registers, and constant pool;
   - arithmetic, comparison, logical, string, and bitwise operators, with Flash Player's conversions for each SWF version;

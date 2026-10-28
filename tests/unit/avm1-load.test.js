@@ -154,13 +154,13 @@ test('loadVariables: name=value pairs set variables of the target, then its data
   assert.deepStrictEqual([utf8.box().variables.get('name'), utf8.box().variables.get('t')], ['José', 'ñ']);
 });
 
-test('GetURL with _level0 loads into the root; other levels and window targets are reported', async () => {
+test('GetURL with _level0 loads into the root; other levels are reported and window targets go to the page host', async () => {
   const m = await start(launcher([getURL('child.swf', '_level0')]), bytesOf({ 'child.swf': child() }));
   await m.settle();
   assert.strictEqual(m.root.frameCount(), 2);
   assert.strictEqual(m.root.env.version, 8);
   const other = await start(launcher([getURL('child.swf', '_level1'), getURL2('page.html', '_blank', 0), getURL('page.html', '_self')]), bytesOf({}));
-  assert.deepStrictEqual(other.reported, ['load:level', 'avm1:GetURL2', 'avm1:GetURL']);
+  assert.deepStrictEqual(other.reported, ['load:level', 'browser:noHost', 'browser:noHost']);
   assert.deepStrictEqual(other.requests, []);
   assert.strictEqual(other.box().displayList.size, 1);
 });
@@ -172,7 +172,7 @@ test('loads that cannot be shown are reported; without a loader nothing changes'
   const refused = await start(launcher([getURL2('child.swf', 'box', 0x41)]), () => null);
   assert.strictEqual(refused.requests[0].method, 'GET');
   await refused.settle();
-  assert.deepStrictEqual(refused.reported, ['load:sendVariables', 'load:refused']);
+  assert.deepStrictEqual(refused.reported, ['load:refused']);
   assert.strictEqual(refused.box().displayList.size, 0, 'a failed load leaves the clip empty');
   const broken = await start(launcher([getURL2('a.swf', 'box'), getURL2('b.bin', 'box'), getURL2('c.swf', 'box')]), (r) => {
     if (r.url === 'a.swf') throw new Error('host error');
@@ -216,7 +216,7 @@ test('MovieClip.loadMovie, unloadMovie and loadVariables', async () => {
   const m = await start(launcher([call('loadVariables', 'vars.txt', 'POST')]), (r) => (r.type === 'variables' ? 'k=v' : child()));
   await m.settle();
   assert.strictEqual(m.box().variables.get('k'), 'v');
-  assert.deepStrictEqual(m.requests[0], { url: 'vars.txt', type: 'variables', method: 'POST' });
+  assert.deepStrictEqual(m.requests[0], { url: 'vars.txt', type: 'variables', method: 'POST', variables: [], body: '' });
   const n = await start(launcher([call('loadMovie', 'child.swf')]), bytesOf({ 'child.swf': child() }));
   await n.settle();
   assert.strictEqual(n.box().frameCount(), 2);

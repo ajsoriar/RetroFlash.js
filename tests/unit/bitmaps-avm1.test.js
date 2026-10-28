@@ -98,7 +98,7 @@ test('AVM1: gotoLabel + play, setTarget + gotoFrame on a named instance, stop', 
   assert.strictEqual(root.playing, false, 'stop() in frame 5');
   assert.strictEqual(spinner().frame, 7, 'spinner sent to frame 7 through setTarget');
   assert.strictEqual(spinner().playing, false, 'GotoFrame stops the clip (gotoAndStop), as in Flash Player');
-  assert.ok(reported.includes('avm1:GetURL'), 'GetURL reported');
+  assert.ok(reported.includes('browser:noHost'), 'GetURL without a page host reported');
   assert.ok(!reported.includes('avm1:Push') && !reported.includes('avm1:SetVariable'), 'Push and SetVariable are interpreted');
   assert.strictEqual(root.variables.get('x'), '1', 'frame 5 sets x = "1" on the root (SetTarget "" returns to it)');
 });

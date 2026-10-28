@@ -12,6 +12,7 @@ const { buildActions } = require('./actions');
 const { buildButtons } = require('./buttons');
 const { buildText } = require('./text');
 const { buildGame } = require('./game');
+const { buildBrowser } = require('./browser');
 
 const fileAttributes = (raw = 0) => tag(T.FileAttributes, body((w) => w.u32(raw)));
 const background = (r, g, b) => tag(T.SetBackgroundColor, body((w) => w.rgb({ r, g, b })));
@@ -183,6 +184,17 @@ const fixtures = [
     build: buildActions,
     expect: {
       signature: 'FWS', version: 6, width: 200, height: 200, fps: 12, frameCount: 6, actualFrameCount: 6, tags: 19,
+      diagnostics: [], unsupported: ['actionscript:DoAction']
+    }
+  },
+  {
+    file: 'valid/fws-browser.swf',
+    description: 'Browser-interaction fixture (tests/fixtures/browser.js): getURL to the current window, _blank and a named ' +
+      'window, javascript:panorama(2) and (3), an FSCommand, GET and POST forms sending the variables of a sprite, ' +
+      'loadMovie into "contenedor", and a gallery whose buttons change num_img to load "vv/imagenes/img" + num_img + ".jpg" into "square".',
+    build: buildBrowser,
+    expect: {
+      signature: 'FWS', version: 7, width: 400, height: 200, fps: 12, frameCount: 3, actualFrameCount: 3, tags: 33,
       diagnostics: [], unsupported: ['actionscript:DoAction']
     }
   },

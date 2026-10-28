@@ -12,6 +12,7 @@ h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}a{color:#67e8f9}
 button{padding:7px 14px;border:1px solid #4b5563;border-radius:8px;background:#1f2937;color:#e5e7eb;cursor:pointer;font:inherit}button:hover:not(:disabled){border-color:#67e8f9}button:disabled{opacity:.45;cursor:default}
 #seek{flex:1;min-width:160px}#frame{font-variant-numeric:tabular-nums;min-width:120px}
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;border-bottom:1px solid #374151;text-align:left;vertical-align:top}.empty{color:#6b7280}
+details{margin:16px 0;padding:10px 12px;border:1px solid #374151;border-radius:8px}summary{cursor:pointer}#interaction-log{max-height:220px;overflow:auto;font:12px ui-monospace,monospace;padding-left:28px}#interaction-log li{padding:3px 0;overflow-wrap:anywhere}.interaction-meta{color:#9ca3af}
 </style>
 </head>
 <body>
@@ -37,6 +38,10 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
   <input id="seek" type="range" min="1" max="1" value="1" disabled aria-label="Frame">
   <span id="frame">–</span>
 </div>
+<details id="interaction-panel"><summary>Browser / SWF interaction log</summary>
+  <button id="clear-interactions" type="button">Clear log</button>
+  <ol id="interaction-log" aria-live="polite"><li class="empty">No browser interactions yet.</li></ol>
+</details>
 <h2>Not drawn or not supported</h2>
 <table><thead><tr><th>Feature</th><th>Count</th><th>Reason</th></tr></thead><tbody id="unsupported"></tbody></table>
 <!-- The source scripts, in the order of src/modules.json. dist/retroflash.min.js (npm run build) replaces them all. -->
@@ -53,6 +58,7 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
 <script src="../src/avm1/properties.js"></script>
 <script src="../src/avm1/objects.js"></script>
 <script src="../src/avm1/variables.js"></script>
+<script src="../src/avm1/external.js"></script>
 <script src="../src/avm1/globals.js"></script>
 <script src="../src/avm1/interpreter.js"></script>
 <script src="../src/display/movie.js"></script>
@@ -62,7 +68,9 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
 <script src="../src/input/hit-test.js"></script>
 <script src="../src/input/input.js"></script>
 <script src="../src/render/canvas-renderer.js"></script>
+<script src="../src/browser/host.js"></script>
 <script src="../src/retroflash.js"></script>
+<script src="../src/browser/legacy-autoplay.js"></script>
 <script>
 (function(){
   'use strict';
@@ -80,7 +88,19 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
     list.forEach(function(u){var tr=document.createElement('tr');[u.feature,u.count,u.reason].forEach(function(v){var td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);});body.appendChild(tr);});
     if(!list.length){var tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=3;td.className='empty';td.textContent='Nothing reported';tr.appendChild(td);body.appendChild(tr);}
   }
+  function renderInteractions(){
+    var list=$('interaction-log'),entries=player.getInteractionLog().slice(-30);list.replaceChildren();
+    if(!entries.length){var empty=document.createElement('li');empty.className='empty';empty.textContent='No browser interactions yet.';list.appendChild(empty);return;}
+    entries.forEach(function(entry){
+      var parts=[entry.channel,entry.status];
+      ['url','target','method','variableCount','name','argumentCount','command','resourceType','errorCode'].forEach(function(key){if(entry[key]!==undefined&&entry[key]!==''&&entry[key]!==null)parts.push(key+'='+entry[key]);});
+      var row=document.createElement('li'),direction=entry.direction==='incoming'?'IN':'OUT';
+      row.textContent=new Date(entry.time).toLocaleTimeString()+' ['+direction+'] '+parts.join(' | ');list.appendChild(row);
+    });
+  }
   player.on('frame',showFrame).on('warning',showUnsupported);
+  player.on('interaction',renderInteractions);
+  $('clear-interactions').addEventListener('click',function(){player.clearInteractionLog();renderInteractions();});
   async function open(file){
     if(!file)return;
     $('status').textContent='Loading '+file.name+'…';setEnabled(false);

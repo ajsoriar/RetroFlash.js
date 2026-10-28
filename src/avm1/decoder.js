@@ -153,10 +153,13 @@
         }
         break;
       case 0x9a:
+        /* Flash Player and the tools that write SWF files use this layout, not the one drawn in the SWF 19
+           specification: bit 7 loads variables, bit 6 loads into a clip (the target is a clip path, not a
+           window), and the low two bits are the method: 0 none, 1 GET, 2 POST. Method 3 is treated as none. */
         var method = r.readUI8('GetURL2 flags');
-        a.sendVarsMethod = method >> 6;
-        a.loadTarget = (method & 2) !== 0;
-        a.loadVariables = (method & 1) !== 0;
+        a.sendVarsMethod = (method & 3) === 3 ? 0 : method & 3;
+        a.loadTarget = (method & 0x40) !== 0;
+        a.loadVariables = (method & 0x80) !== 0;
         break;
       case 0x9f:
         var goto2 = r.readUI8('GotoFrame2 flags');

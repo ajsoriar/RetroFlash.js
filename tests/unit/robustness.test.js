@@ -148,12 +148,31 @@ test('bitmap pixels are reserved from per-image and per-movie budgets', () => {
 test('an oversized JPEG is refused from its header, before the browser decodes it', async () => {
   const sof = (w, h) => [0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, h >> 8, h & 0xff, w >> 8, w & 0xff, 1, 1, 0x11, 0, 0xff, 0xd9];
   const { movie } = await run([B.defineBitsJPEG2(1, sof(30000, 30000)), B.defineBitsJPEG2(2, sof(10, 10)), B.defineBitsJPEG2(3, sof(10, 10)), show(), end()]);
-  const failures = [];
-  await movie.decodeBitmaps(4096 * 4096, 150, (feature, reason, source) => failures.push(source));
-  // Node has no createImageBitmap: any bitmap that got past the checks fails there instead.
+  const failures = [], limits = { maxPixels: 4096 * 4096, remaining: 150 };
+  await movie.decodeBitmaps(limits, (feature, reason, source) => failures.push(source));
+  // Node has no createImageBitmap: any bitmap that got past the checks fails there instead, and gives its
+  // pixels back, so bitmap 3 fits the budget too.
   assert.match(failures[0], /^1 .*30000×30000 exceeds options\.maxBitmapPixels/);
-  assert.doesNotMatch(failures[1], /maxTotalBitmapPixels/, 'bitmap 2 fits the movie budget');
-  assert.match(failures[2], /^3 .*maxTotalBitmapPixels/);
+  assert.match(failures[1], /^2 .*createImageBitmap/);
+  assert.match(failures[2], /^3 .*createImageBitmap/);
+  assert.strictEqual(limits.remaining, 150);
+  // With a decoder, pixels stay reserved until the movie is released.
+  const hadBlob = typeof Blob !== 'undefined';
+  if (!hadBlob) global.Blob = class { constructor(parts) { this.parts = parts; } };
+  global.createImageBitmap = async () => ({ width: 10, height: 10, close() { this.closed = true; } });
+  try {
+    const { movie: other } = await run([B.defineBitsJPEG2(2, sof(10, 10)), B.defineBitsJPEG2(3, sof(10, 10)), show(), end()]);
+    const budget = { maxPixels: 4096 * 4096, remaining: 150 }, refused = [];
+    await other.decodeBitmaps(budget, (feature, reason, source) => refused.push(source));
+    assert.strictEqual(refused.length, 1);
+    assert.match(refused[0], /^3 .*maxTotalBitmapPixels/);
+    assert.strictEqual(budget.remaining, 50);
+    assert.strictEqual(other.release(), 100, 'release gives back what the bitmaps reserved');
+    assert.strictEqual(other.characters[2].source, null);
+  } finally {
+    delete global.createImageBitmap;
+    if (!hadBlob) delete global.Blob;
+  }
 });
 
 // Player on a stand-in canvas whose 2D context ignores every call.

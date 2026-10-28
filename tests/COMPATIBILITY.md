@@ -15,8 +15,8 @@ node tools/corpus.js some.swf folder/    # the compatibility matrix of any SWF f
 
 | Environment | `DecompressionStream` | Result (2026-10-28) |
 |---|---|---|
-| Node 16.15.0 (Windows) | test-only zlib polyfill (`tests/support/load-reader.js`) | 210 passed, 0 failed (sources and `dist` bundle) |
-| Node 22.13.0 (Windows) | native | 210 passed, 0 failed (sources and `dist` bundle) |
+| Node 16.15.0 (Windows) | test-only zlib polyfill (`tests/support/load-reader.js`) | 221 passed, 0 failed (sources and `dist` bundle) |
+| Node 22.13.0 (Windows) | native | 221 passed, 0 failed (sources and `dist` bundle) |
 | Chrome (headless, Windows) | native | Manual run of `demo/player.html`; see “Rendering” below. Not automated |
 
 The runtime does not ship the polyfill. In Node, it lets the reader's real streaming code run where the global is missing.
@@ -108,7 +108,7 @@ These are covered in `unit/*.test.js`:
   - record boundaries up to `ActionEndFlag`, and the bytes after it;
   - the operands of every action that has them:
     - `Push` values of every type, including the word order of doubles and negative integers;
-    - the flags of `GetURL2`, `GotoFrame2`, `DefineFunction2`, and `Try`;
+    - the flags of `GetURL2` as Flash Player writes them (`0x80` variables, `0x40` into a clip, the method in the low bits, 3 read as none), `GotoFrame2`, `DefineFunction2`, and `Try`;
     - function, `With`, and `Try` bodies;
   - branch targets measured from the next record, back to the start, at the end of the block, outside it (`INVALID_BRANCH`), and inside another record;
   - strings decoded as Latin-1 before SWF 6 and as UTF-8 from SWF 6;
@@ -178,7 +178,16 @@ These are covered in `unit/*.test.js`:
   - a clip with `onPress`/`onRelease` picked as a button (hand cursor, press and release, released hover);
   - `attachMovie` by export name with an init object, `createEmptyMovieClip`, `getNextHighestDepth`, `getInstanceAtDepth`, `swapDepths`, `getBounds` in two spaces, `hitTest` on a point (shape and bounds) and on clips, `localToGlobal`, and `removeMovieClip` of an attached clip;
   - `DoInitAction` running once, before the frame scripts.
-- **Compatibility corpus** (`corpus.test.js`): the layer of each diagnostic; the version matrix below against Flash Player's rules (63 cells); the fixture matrix twice (identical runs) against its committed snapshot, with error messages compared by layer only because the zlib wording differs between Node versions; a rejected file failing in the parser layer, an ActionScript 3 movie in the vm layer, and an unknown action and a `GetURL` landing in the vm and api layers.
+- **Loading into clips** (`avm1-load.test.js`; launcher and loaded SWFs, PNG images, and host loaders built in memory; images are measured from their header, as Node has no image decoder):
+  - `loadMovie` through `GetURL2` `0x40`: the loader gets `{ url, type: 'movie', method: null }`; the clip is empty at once, then plays the SWF 8 movie from frame 1 at the same place and name; the loaded movie's shape 1 and sprite 2 are its own (sprite 2 inside the launcher's sprite 2 is not taken for a recursion); `-8 >>> 0` gives -8 in the loaded SWF 8 code and 4294967288 in the SWF 7 launcher; `_url`; it keeps playing;
+  - the target's clip events: `load`, `unload` when emptied, `load` again when the movie arrives;
+  - a PNG image at the clip origin (`_width` 4, `_height` 2), its pixels taken from the load budget and given back by `unloadMovie`, which closes the image;
+  - `unloadMovie` without a loader; `loadVariables` (`0xC0`) with `+`, escapes, empty values, Latin-1 escapes, and UTF-8 bytes, then the `data` event, without emptying the clip;
+  - `GetURL` to `_level0` replacing the root; `_level1`, window targets of `GetURL` and `GetURL2` reported and never sent to the loader;
+  - no loader (reported, the clip unchanged), a refused URL, `GET` reported as not sent, a loader that throws, data that is no SWF or image, a missing target; only the latest load into a clip counts, even when an older one finishes last; at most 8 loads waiting;
+  - the MovieClip methods `loadMovie`, `unloadMovie`, and `loadVariables` (with `POST`);
+  - the Player: an invalid `loader` option, a load shown at once while paused and at the next frame while playing, content freed by `stop()`.
+- **Compatibility corpus** (`corpus.test.js`): the layer of each diagnostic; the version matrix below against Flash Player's rules (63 cells); the fixture matrix twice (identical runs) against its committed snapshot, with error messages compared by layer only because the zlib wording differs between Node versions; a rejected file failing in the parser layer, an ActionScript 3 movie in the vm layer, and an unknown action and a `GetURL` landing in the vm and api layers. Loads (`load:`) are in the api layer.
 - **Text** (`text.test.js`, SWFs built in memory):
   - a DefineFont whose codes, name, and style come from DefineFontInfo;
   - a DefineText without its end byte (`TEXT_END_MISSING`), and a DefineFont2 glyph offset past the tag (`INVALID_OFFSET`, tag invalid);
@@ -203,7 +212,7 @@ These are covered in `unit/*.test.js`:
 
 A layer is `ok`, `partial` (something was reported), or **failed** (an exception or a rejected file stops the run). Every run is the same: the clock advances one frame per tick, `random` follows a fixed sequence, 60 frames run (`--frames N`), and halfway the pointer moves to the stage centre, presses, and releases. Bitmaps are not decoded and drawing goes to a stand-in canvas, so pixels are not compared; that stays a manual check in Chrome. `--json` writes every field (hash, tags, action counts, features by layer).
 
-The matrix of the project's fixtures is committed as [`corpus/fixtures-matrix.md`](./corpus/fixtures-matrix.md) (and `.json`), and `corpus.test.js` fails when it changes. Third-party files are never committed: run the tool on them locally. `visita.swf` (see below) gives `ok` in every layer with 16 AVM1 steps.
+The matrix of the project's fixtures is committed as [`corpus/fixtures-matrix.md`](./corpus/fixtures-matrix.md) (and `.json`), and `corpus.test.js` fails when it changes. Third-party files are never committed: run the tool on them locally. `visita.swf` (see below) gives `ok` in every layer with 16 AVM1 steps. With `--resources DIR`, a URL a script loads is answered with the file of `DIR` named like its last path segment; images are then only checked by their header, and the bitmaps of loaded movies are not decoded, as for the main movie.
 
 ### Version matrix
 
@@ -288,3 +297,11 @@ With player 0.3, hovering one of its three menu buttons (the building floors) sh
 With player 0.4, its three `DefineEditText` fields decode. They use a device font, a `DefineFont2` named Verdana (bold) without glyphs. Their titles draw centered in bold: "Visita Virtual" from frame 1, and at frame 5 over the building. No text feature is reported as unsupported.
 
 With the AVM1 work since then (unreleased), its 71 action blocks run with nothing reported, and in headless Chrome each of the three menu buttons takes the movie to its floor (`_root.gotoAndPlay(…)`). `tools/corpus.js` gives `ok` in every layer.
+
+## Manual check of loading into clips (two real files, not fixtures)
+
+Two other third-party files of unknown redistribution rights, not included in the repository: a launcher (SWF 7, 700×350, 72 frames) whose script runs `loadMovie("visor.swf", "contenedor")`, and `visor.swf` (SWF 8, 700×270, 86 frames), an image gallery whose `visor` clip runs `loadMovie("http://…/img" + num_img + ".jpg", "square")`. Both encode the load with `GetURL2` flags `0x40`.
+
+- `tools/corpus.js --frames 300 --resources <folder>` on the launcher: `ok` in every layer (the pointer probe opens the gallery); without `--resources`, `load:noLoader` in the api layer.
+- Headless Chrome, sources and `dist` bundle, with a page loader that answers `visor.swf` and seven stand-in JPEGs drawn by the page: after a click on the stage, `visor.swf` plays inside `_level0.sec_img.contenedor` as SWF 8, with its own embedded photo drawn. Sent to its image frame, its `visor` clip asks for `…/img3.jpg`, which the browser decodes and draws inside `square` (400×200). Nothing else is reported. The image section is not reached through the movie's own buttons in this check.
+- Drawing the fixtures and `visita.swf` gives the same pixels as before this change.

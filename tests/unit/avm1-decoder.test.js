@@ -28,9 +28,16 @@ test('decoder: operands of the SWF 3 and SWF 4 actions', () => {
   assert.deepStrictEqual(first([rec(0x8c, ...str('intro'))]).args, { label: 'intro' });
   assert.deepStrictEqual(first([rec(0x8a, 0x10, 0x01, 3)]).args, { frame: 0x110, skipCount: 3 });
   assert.deepStrictEqual(first([rec(0x8d, 7)]).args, { skipCount: 7 });
-  // GetURL2: SendVarsMethod UB[2], Reserved UB[4], LoadTargetFlag UB[1], LoadVariablesFlag UB[1].
-  assert.deepStrictEqual(first([rec(0x9a, 0b10000011)]).args, { sendVarsMethod: 2, loadTarget: true, loadVariables: true });
-  assert.deepStrictEqual(first([rec(0x9a, 0b01000000)]).args, { sendVarsMethod: 1, loadTarget: false, loadVariables: false });
+  // GetURL2 as Flash Player reads it: LoadVariablesFlag 0x80, LoadTargetFlag 0x40, SendVarsMethod in the low two
+  // bits (the SWF 19 drawing has them the other way round). Method 3 is invalid and means none.
+  const getURL2 = (flags) => first([rec(0x9a, flags)]).args;
+  assert.deepStrictEqual(getURL2(0x40), { sendVarsMethod: 0, loadTarget: true, loadVariables: false });
+  assert.deepStrictEqual(getURL2(0xc0), { sendVarsMethod: 0, loadTarget: true, loadVariables: true });
+  assert.deepStrictEqual(getURL2(0x80), { sendVarsMethod: 0, loadTarget: false, loadVariables: true });
+  assert.deepStrictEqual(getURL2(0x01), { sendVarsMethod: 1, loadTarget: false, loadVariables: false });
+  assert.deepStrictEqual(getURL2(0x42), { sendVarsMethod: 2, loadTarget: true, loadVariables: false });
+  assert.deepStrictEqual(getURL2(0x03), { sendVarsMethod: 0, loadTarget: false, loadVariables: false });
+  assert.deepStrictEqual(getURL2(0x3c), { sendVarsMethod: 0, loadTarget: false, loadVariables: false });
   // GotoFrame2: Reserved UB[6], SceneBiasFlag UB[1], PlayFlag UB[1], then SceneBias UI16 when the flag is set.
   assert.deepStrictEqual(first([rec(0x9f, 0b11, 2, 1)]).args, { play: true, sceneBias: 0x102 });
   assert.deepStrictEqual(first([rec(0x9f, 0)]).args, { play: false, sceneBias: 0 });
@@ -208,9 +215,12 @@ test('AVM1: an executed action with malformed operands ends the script', async (
   assert.strictEqual(body.root.playing, true);
 });
 
-test('AVM1: a malformed action outside the subset is reported and skipped, as before', async () => {
-  const { root, reported } = await runActions(rec(0x9a), B.A.stop()); // GetURL2 without its flags
-  assert.ok(reported.includes('avm1:GetURL2'));
-  assert.ok(!reported.includes('avm1:malformedAction'));
-  assert.strictEqual(root.playing, false);
+test('AVM1: an unknown action is reported and skipped by its length; a GetURL2 without flags ends the script', async () => {
+  const unknown = await runActions(rec(0x80, 1, 2, 3), B.A.stop());
+  assert.ok(unknown.reported.includes('avm1:Unknown_0x80'));
+  assert.ok(!unknown.reported.includes('avm1:malformedAction'));
+  assert.strictEqual(unknown.root.playing, false, 'the Stop after it ran');
+  const getURL2 = await runActions(rec(0x9a), B.A.stop());
+  assert.ok(getURL2.reported.includes('avm1:malformedAction'));
+  assert.strictEqual(getURL2.root.playing, true);
 });

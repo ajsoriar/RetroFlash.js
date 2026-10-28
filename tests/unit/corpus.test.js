@@ -19,7 +19,7 @@ test('layerOf: each diagnostic belongs to one layer', () => {
     'tag:Unknown_1000': 'parser', 'actionscript:DoABC': 'parser', 'PlaceObject2.clipActions': 'parser',
     TRUNCATED_DATA: 'parser', MISSING_END: 'parser',
     'avm1:Unknown_0x99': 'vm', 'avm1:maxActionSteps': 'vm', 'avm1:uncaughtThrow': 'vm',
-    'avm1:GetURL': 'api', 'avm1:objectValue': 'api', 'sound:DefineSound': 'api',
+    'avm1:GetURL': 'api', 'avm1:objectValue': 'api', 'sound:DefineSound': 'api', 'load:noLoader': 'api', 'load:failed': 'api',
     'render:blendMode': 'render', 'render:missingCharacter': 'render', 'text:input': 'render',
     'input:keyPress': 'input', 'actionscript:DoAction': null, 'actionscript:DoInitAction': null
   };

@@ -357,7 +357,11 @@
       getDepth: clipMethod(function (clip) { return clip.parent ? clip.displayObject().depth - M.SCRIPT_DEPTH : -16384; }),
       getBytesLoaded: clipMethod(function (clip) { return clip.env.swf.declaredLength || 0; }),
       getBytesTotal: clipMethod(function (clip) { return clip.env.swf.declaredLength || 0; }),
-      getURL: clipMethod(function (clip, args, rt) { rt.scheduler.report('avm1:GetURL', 'getURL is ignored: the player never navigates, opens windows or loads URLs.', 'MovieClip.getURL'); }),
+      getURL: clipMethod(function (clip, args, rt) { rt.scheduler.report('avm1:GetURL', 'getURL is ignored: the player never navigates or opens windows.', 'MovieClip.getURL'); }),
+      // loadMovie(url, method), loadVariables(url, method) and unloadMovie(), through the host page's loader.
+      loadMovie: clipMethod(function (clip, args, rt) { loadMethod(clip, args, 'movie', rt); }),
+      loadVariables: clipMethod(function (clip, args, rt) { loadMethod(clip, args, 'variables', rt); }),
+      unloadMovie: clipMethod(function (clip, args, rt) { loadMethod(clip, [''], 'movie', rt); }),
       startDrag: clipMethod(function (clip, args) {
         var rect = args.length >= 5 ? [num(args[1]), num(args[2]), num(args[3]), num(args[4])] : null;
         M.startDrag(clip, toBoolean(arg(args, 0), version), rect);
@@ -409,8 +413,14 @@
         var obj = clip.displayList.get(toInt32(arg(args, 0), version) + M.SCRIPT_DEPTH);
         return obj && obj.clip ? obj.clip : undefined;
       }),
-      getSWFVersion: clipMethod(function () { return version; })
+      getSWFVersion: clipMethod(function (clip) { return clip.env.version; })
     });
+    function loadMethod(clip, args, kind, rt) {
+      var method = str(arg(args, 1)).toUpperCase();
+      M.loadInto(clip, str(arg(args, 0)), kind, method === 'GET' ? 1 : method === 'POST' ? 2 : 0, function (feature, reason, detail) {
+        rt.scheduler.report(feature, reason, 'MovieClip.' + (kind === 'variables' ? 'loadVariables' : 'loadMovie') + ': ' + detail);
+      });
+    }
     // A clip named by a value: a clip, or a target path from `clip`.
     function clipArg(clip, v) {
       if (isClip(v)) return v;

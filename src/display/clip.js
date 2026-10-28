@@ -35,20 +35,44 @@
   };
   /* The display context shared by every Clip of one movie: the dictionary, report(feature, reason, source),
      the limits (resolveLimits), `instances` (sprite and button instances created in the current step; the
-     player resets it at each tick, seek and input event), and `scripts`, the movie's ActionScheduler.
-     options: { limits, actions } (actions: false queues no scripts). */
+     player resets it at each tick, seek and input event), `scripts`, the movie's ActionScheduler, and `loads`,
+     its LoadQueue (display/loader.js). options: { limits, actions, loader, maxFileBytes } (actions: false
+     queues no scripts; loader: the host page's loader function). */
   function createEnv(movie, report, options) {
     options = options || {};
     var limits = options.limits || resolveLimits();
     return {
-      characters: movie.characters, exports: movie.exports || Object.create(null), swf: movie.swf, version: movie.swf.version, report: report, limits: limits,
-      instances: 0, instanceNames: 0, input: null, initActions: new Set(), scripts: new ActionScheduler(movie.swf, report, limits, options.actions)
+      characters: movie.characters, exports: movie.exports || Object.create(null), swf: movie.swf, version: movie.swf.version, url: '',
+      report: report, limits: limits, instances: 0, instanceNames: 0, input: null, initActions: new Set(),
+      scripts: new ActionScheduler(movie.swf, report, limits, options.actions),
+      loads: M.LoadQueue ? new M.LoadQueue(options.loader, report, limits, options.maxFileBytes) : null
     };
   }
-  // Character ids of the sprites containing this clip (the root is 0).
+  /* The context of a movie or image loaded into a clip: its own dictionary, exports, SWF version and URL; the
+     rest (scripts, loads, limits, instance counts, input and dragging state) is the main movie's. */
+  var SHARED_STATE = ['instances', 'instanceNames', 'input', 'drag', 'dropTarget'];
+  function createMovieEnv(env, movie, url) {
+    var main = env.main || env, child = Object.create(main);
+    SHARED_STATE.forEach(function (key) {
+      Object.defineProperty(child, key, { get: function () { return main[key]; }, set: function (value) { main[key] = value; } });
+    });
+    return Object.assign(child, {
+      main: main, characters: movie.characters, exports: movie.exports, swf: movie.swf, version: movie.swf.version, url: url,
+      initActions: new Set()
+    });
+  }
+  // A movie with nothing in it (an emptied clip, or an image), standing in for a SWF file of `version`.
+  function contentMovie(version, byteLength, characters) {
+    return {
+      characters: characters || Object.create(null), exports: Object.create(null),
+      swf: { version: version, declaredLength: byteLength, width: 0, height: 0, getTagData: function () { return new Uint8Array(0); } }
+    };
+  }
+  function emptyTimeline(name) { return { type: 'sprite', id: 0, name: name, frames: [[]], labels: Object.create(null) }; }
+  // Character ids of the sprites containing this clip, up to the root of its movie (0).
   Clip.prototype.ancestry = function () {
     var ids = [];
-    for (var clip = this; clip; clip = clip.parent) ids.push(clip.def.id);
+    for (var clip = this; clip; clip = clip.content ? null : clip.parent) ids.push(clip.def.id);
     return ids;
   };
   /* `level` and `ancestry` describe the container: they default to this clip's; button children pass the
@@ -106,6 +130,7 @@
     (function unload(clip) {
       clip.displayList.forEach(function (child) { if (child.clip) unload(child.clip); });
       clip.removed = true;
+      clip.releaseContent();
       env.scripts.clipEvent(clip, 'unload');
     })(obj.clip);
   }
@@ -297,6 +322,52 @@
     retire(this.env, obj);
     return true;
   };
+  /* Loading into this clip (display/loader.js). The clip keeps its display object (name, depth, transform,
+     clip events), but its content goes: its children leave with their unload events, it gets its own unload
+     event, its variables and methods are cleared, and it becomes an empty one-frame timeline (0 bytes) until
+     new content arrives. */
+  Clip.prototype.clearContent = function () {
+    var env = this.env;
+    this.displayList.forEach(function (obj) { retire(env, obj); });
+    if (env.scripts) env.scripts.clipEvent(this, 'unload');
+    this.displayList = new Map();
+    this.variables = new Map();
+    this.releaseContent();
+    this.env = createMovieEnv(env, contentMovie(env.version, 0), env.url);
+    this.def = emptyTimeline('empty');
+    this.frame = 1;
+    this.playing = true;
+  };
+  // Frees the bitmaps of loaded content and gives their pixels back to the load budget.
+  Clip.prototype.releaseContent = function () {
+    var content = this.content, loads = this.env.loads;
+    if (!content) return;
+    this.content = null;
+    var pixels = content.movie ? content.movie.release() : (M.releaseSource(content.image), content.image.reserved);
+    if (loads) { loads.pixels.remaining += pixels; loads.contents.delete(this); }
+  };
+  // Shows a loaded movie: its root timeline from frame 1, with its own dictionary, then the clip's load event.
+  Clip.prototype.showMovie = function (movie, url) {
+    this.showContent(createMovieEnv(this.env, movie, url), movie.root, { movie: movie });
+  };
+  // Shows a loaded image ({ source, width, height, reserved }) at the clip's origin, at one twip per 1/20 pixel.
+  Clip.prototype.showImage = function (image, url) {
+    var bitmap = { type: 'bitmap', id: 1, name: url, source: image.source, width: image.width, height: image.height };
+    var movie = contentMovie(this.env.version, 0, Object.create(null));
+    movie.characters[1] = bitmap;
+    this.showContent(createMovieEnv(this.env, movie, url), emptyTimeline('image'), { image: image });
+    this.displayList.set(1, { depth: 1, characterId: 1, character: bitmap, matrix: IDENTITY, cx: CX_IDENTITY, clip: null });
+  };
+  Clip.prototype.showContent = function (env, def, content) {
+    this.releaseContent();
+    this.env = env;
+    this.def = def;
+    this.content = content;
+    this.frame = 0;
+    this.playing = true;
+    this.gotoFrame(1);
+    if (env.scripts) env.scripts.clipEvent(this, 'load');
+  };
   Clip.prototype.findLabel = function (label) {
     var labels = this.def.labels;
     if (label in labels) return labels[label];
@@ -305,5 +376,5 @@
     return 0;
   };
 
-  Object.assign(M, { Clip: Clip, createEnv: createEnv, SCRIPT_DEPTH: SCRIPT_DEPTH });
+  Object.assign(M, { Clip: Clip, createEnv: createEnv, createMovieEnv: createMovieEnv, SCRIPT_DEPTH: SCRIPT_DEPTH });
 })(typeof window !== 'undefined' ? window : globalThis);

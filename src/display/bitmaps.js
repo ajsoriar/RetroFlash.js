@@ -132,13 +132,51 @@
     limits.remaining -= pixels;
     return pixels;
   }
-  // Browser only: returns a drawable (ImageBitmap or canvas) for a bitmap character. Pixels are reserved
-  // from `limits` before decoding, using the size declared by the SWF tag or the image header.
+  // The format of encoded image data from its signature: 'jpeg', 'png', 'gif', or null.
+  function imageFormat(bytes) {
+    var b = bytes;
+    if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8) return 'jpeg';
+    if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+    if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'gif';
+    return null;
+  }
+  /* Browser only: decodes JPEG, PNG or GIF data with the browser's decoder into an ImageBitmap. The size in its
+     header is reserved from `limits` first, and given back if decoding fails. Returns { image, reserved }. */
+  async function decodeEncoded(bytes, format, limits, name) {
+    if (!IMAGE_TYPES[format]) throw playerError('BITMAP_FORMAT', 'Unrecognised image data in ' + name);
+    var declared = imageSize(bytes, format);
+    if (!declared) throw playerError('BITMAP_FORMAT', 'No image size found in the ' + format + ' header of ' + name);
+    var reserved = reservePixels(limits, declared.width, declared.height), image;
+    try {
+      image = await createImageBitmap(new Blob([bytes], { type: IMAGE_TYPES[format] }));
+    } catch (err) {
+      limits.remaining += reserved;
+      throw err;
+    }
+    // The decoder's result must not be larger than what the header declared (and was reserved).
+    if (image.width * image.height > reserved) {
+      image.close();
+      limits.remaining += reserved;
+      throw playerError('BITMAP_TOO_LARGE', image.width + '×' + image.height + ' is larger than the ' + declared.width + '×' + declared.height + ' declared in its header');
+    }
+    return { image: image, reserved: reserved };
+  }
+  /* An image file loaded into a clip (loadMovie): { source, width, height, reserved }. A JPEG may carry the
+     extra markers that SWF tools add; they are removed as for DefineBitsJPEG2. */
+  async function decodeImage(bytes, limits, name) {
+    var format = imageFormat(bytes);
+    if (format === 'jpeg') bytes = cleanJpeg(bytes);
+    var decoded = await decodeEncoded(bytes, format, limits, name);
+    return { source: decoded.image, width: decoded.image.width, height: decoded.image.height, reserved: decoded.reserved };
+  }
+  /* Browser only: returns a drawable (ImageBitmap or canvas) for a bitmap character. Pixels are reserved
+     from `limits` before decoding, using the size declared by the SWF tag or the image header; the amount is
+     kept in `character.reserved` (Movie.release gives it back). */
   async function decodeBitmap(swf, character, jpegTables, limits) {
     var f = character.fields, data = swf.getTagData(character.tag), code = character.tag.code;
     if (code === 20 || code === 36) {
       if (!f.width || !f.height) throw playerError('BITMAP_EMPTY', 'Bitmap has no pixels');
-      reservePixels(limits, f.width, f.height);
+      character.reserved = reservePixels(limits, f.width, f.height);
       var pixels = decodeLossless(f, await global.SWFReader.inflate(data.subarray(f.dataStart), losslessByteLength(f), { truncate: true }));
       var canvas = createCanvas(pixels.width, pixels.height);
       canvas.getContext('2d').putImageData(new ImageData(pixels.rgba, pixels.width, pixels.height), 0, 0);
@@ -147,14 +185,9 @@
     var bytes = data.subarray(f.imageStart, f.imageEnd);
     if (code === 6) bytes = jpegTables ? mergeJpegTables(jpegTables, bytes) : cleanJpeg(bytes);
     else if (f.imageFormat === 'jpeg') bytes = cleanJpeg(bytes);
-    if (!IMAGE_TYPES[f.imageFormat]) throw playerError('BITMAP_FORMAT', 'Unrecognised image data in ' + character.name);
-    var declared = imageSize(bytes, f.imageFormat);
-    if (!declared) throw playerError('BITMAP_FORMAT', 'No image size found in the ' + f.imageFormat + ' header of ' + character.name);
-    var reserved = reservePixels(limits, declared.width, declared.height);
-    var image = await createImageBitmap(new Blob([bytes], { type: IMAGE_TYPES[f.imageFormat] }));
+    var decoded = await decodeEncoded(bytes, f.imageFormat, limits, character.name), image = decoded.image;
     var w = image.width, h = image.height;
-    // The decoder's result must not be larger than what the header declared (and was reserved).
-    if (w * h > reserved) { image.close(); throw playerError('BITMAP_TOO_LARGE', w + '×' + h + ' is larger than the ' + declared.width + '×' + declared.height + ' declared in its header'); }
+    character.reserved = decoded.reserved;
     if (f.alphaStart === undefined || f.imageFormat !== 'jpeg') return image;
     // DefineBitsJPEG3/4: separate zlib alpha plane, one byte per pixel; colour data is treated as premultiplied.
     var alpha = await global.SWFReader.inflate(data.subarray(f.alphaStart), w * h, { truncate: true });
@@ -169,6 +202,6 @@
   }
 
   Object.assign(M, { losslessByteLength: losslessByteLength, decodeLossless: decodeLossless, cleanJpeg: cleanJpeg,
-    mergeJpegTables: mergeJpegTables, imageSize: imageSize, reservePixels: reservePixels,
-    decodeBitmap: decodeBitmap });
+    mergeJpegTables: mergeJpegTables, imageSize: imageSize, reservePixels: reservePixels, imageFormat: imageFormat,
+    decodeImage: decodeImage, decodeBitmap: decodeBitmap });
 })(typeof window !== 'undefined' ? window : globalThis);

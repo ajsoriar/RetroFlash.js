@@ -71,7 +71,17 @@
     if (top.visible === false) return;
     this.drawClip(root, multiply([sx, 0, 0, sy, -stage.xMin * sx, -stage.yMin * sy], top.matrix), top.cx);
   };
+  // A clip or button instance. Its bitmap fills and fonts come from its own movie (one loaded into a clip has its own).
   CanvasRenderer.prototype.drawClip = function (clip, matrix, cx) {
+    var outer = this.characters;
+    if (clip.env && clip.env.characters) this.characters = clip.env.characters;
+    try {
+      this.drawList(clip, matrix, cx);
+    } finally {
+      this.characters = outer;
+    }
+  };
+  CanvasRenderer.prototype.drawList = function (clip, matrix, cx) {
     var ctx = this.ctx, depths = clip.depths(), masks = [];
     for (var i = 0; i < depths.length; i++) {
       var depth = depths[i], obj = clip.displayList.get(depth);
@@ -109,11 +119,16 @@
     } else if (character.type === 'editText') {
       this.report('render:textMask', 'Text fields used as masks do not mask anything yet.', character.id);
     } else if ((character.type === 'sprite' && obj.clip) || (character.type === 'button' && obj.button)) {
-      var container = obj.clip || obj.button;
-      container.depths().forEach(function (d) {
-        var child = container.displayList.get(d);
-        if (!child.clipDepth) self.collectMask(child, multiply(world, child.matrix), maskPath);
-      });
+      var container = obj.clip || obj.button, outer = this.characters;
+      if (container.env && container.env.characters) this.characters = container.env.characters;
+      try {
+        container.depths().forEach(function (d) {
+          var child = container.displayList.get(d);
+          if (!child.clipDepth) self.collectMask(child, multiply(world, child.matrix), maskPath);
+        });
+      } finally {
+        this.characters = outer;
+      }
     }
   };
   CanvasRenderer.prototype.drawObject = function (obj, world, cx) {

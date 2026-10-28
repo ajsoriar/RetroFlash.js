@@ -11,6 +11,7 @@
   "avm1/interpreter.js",
   "display/movie.js",
   "display/clip.js",
+  "display/loader.js",
   "display/button.js",
   "input/hit-test.js",
   "input/input.js",

@@ -131,6 +131,7 @@ const player = new RetroFlash.Player({
   maxFileBytes: 50 * 1024 * 1024,   // passed to SWFReader.load
   actions: true,                    // run the AVM1 subset
   input: true,                      // pointer and keyboard on the canvas drive the movie's buttons
+  loader: null,                     // gives the files that scripts load (see "Loading into clips")
   maxActionSteps: 100000            // any of the limits below
 });
 await player.load(fileOrBuffer);     // same inputs as SWFReader.load; decodes bitmaps; resolves with getInfo(),
@@ -177,15 +178,16 @@ Each player module is a classic script. It takes what it needs from the internal
 | `avm1/interpreter.js` | `ActionScheduler`, with one `Activation` per block or call, which runs AVM1 bytecode |
 | `display/movie.js` | The character dictionary and frame lists |
 | `display/clip.js`, `display/button.js` | The display context (`createEnv`), timelines and display lists, and button instances |
+| `display/loader.js` | `LoadQueue`: movies, images, and variables loaded into clips through the host page's loader |
 | `input/hit-test.js`, `input/input.js` | Hit testing, and pointer and keyboard input |
 | `render/canvas-renderer.js` | The Canvas 2D renderer |
 | `retroflash.js` | `RetroFlash.Player`, the public API |
 
-A module uses only modules listed before it in `modules.json`. The one exception is `display/clip.js`, which reads `ButtonInstance` from the namespace when it creates a button, because buttons are built on clips.
+A module uses only modules listed before it in `modules.json`. The exceptions read from the namespace at run time: `display/clip.js` reads `ButtonInstance` when it creates a button, because buttons are built on clips, and `LoadQueue` when it creates a display context; `avm1/interpreter.js` and `avm1/globals.js` read `loadInto` when a script loads something.
 
 The state of one movie is split in two:
 
-- The **display context** (`createEnv`) is shared by every timeline. It holds the dictionary, the report function, the limits, and the per-step instance count.
+- The **display context** (`createEnv`) is shared by every timeline. It holds the dictionary, the report function, the limits, and the per-step instance count. A movie loaded into a clip gets its own context (`createMovieEnv`) with its own dictionary, exports, SWF version, and URL; the rest is the main movie's.
 - The **`ActionScheduler`** (`env.scripts`) queues and runs AVM1 action blocks. It holds the queue, the parsed-action cache, and the budgets. The player opens a new budget for each tick and input event (`scripts.beginUpdate()`), and every `run()` in that update shares it. It drives timelines only through `Clip` methods, so AVM1 does not depend on the display list's internals.
 
 A scrubbing `seek` and the creation of a button's hit area enter frames without running their scripts: the scripts they queue are dropped, with `scripts.mark()` and `scripts.dropSince(mark)`.
@@ -211,6 +213,7 @@ A scrubbing `seek` and the creation of a button's hit area enter frames without 
   - A bitmap that cannot be decoded is reported and not drawn.
   - **Memory limits:** pixels are reserved before decoding. Lossless bitmaps use the tag's width and height. JPEG, PNG, and GIF use the size in the image header (JPEG `SOFn`, PNG `IHDR`, GIF logical screen); an image without a readable size is refused, and a decoded image larger than its header declared is discarded. Each bitmap is limited by `maxBitmapPixels`, and all bitmaps of a movie together by `maxTotalBitmapPixels`, in character id order. A refused bitmap is reported (`render:bitmapDecodeFailed`, with `BITMAP_TOO_LARGE`, `BITMAP_BUDGET`, or `BITMAP_FORMAT`) and not drawn.
   - Bitmap memory is released when the movie is replaced by another `load()` or the player is destroyed.
+- **Loading into clips:** see [Loading into clips](#loading-into-clips).
 - **Overlapping loads:** only the latest `load()` takes effect. An earlier call that is still running, or one interrupted by `destroy()`, resolves to `null` without changing the player or emitting events, even if it fails. Diagnostics it would produce after that point, such as bitmap decoding failures, are dropped.
 - **Shapes:**
   - Edges are grouped by fill style, with FillStyle0 edges reversed, and linked into closed contours.
@@ -286,9 +289,11 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
 - `StartDrag`, `EndDrag`, and `GetTime` (see [Game APIs](#game-apis));
 - functions, objects, and calls (see [Functions and objects](#functions-and-objects)): `DefineFunction`, `DefineFunction2`, `CallFunction`, `CallMethod`, `NewObject`, `NewMethod`, `Call`, `GetMember`, `SetMember`, `Delete`, `Delete2`, `InitArray`, `InitObject`, `Enumerate`, `Enumerate2`, `InstanceOf`, `Extends`, `CastOp`, `ImplementsOp`, `With`, `Try`, and `Throw`.
 
+**Loads** (see [Loading into clips](#loading-into-clips)): `GetURL2` with a clip target (`loadMovie`, `unloadMovie`, `loadVariables`), and `GetURL` or `GetURL2` with the target `_level0` (`loadMovieNum`, `loadVariablesNum`).
+
 **Ignored, but reported:**
 
-- `GetURL` and `GetURL2` (`getURL`, `loadMovie`, `loadVariables`): the player never loads URLs;
+- `GetURL` and `GetURL2` to a window (`getURL`): the player never navigates or opens windows (`avm1:GetURL`, `avm1:GetURL2`);
 - `ToggleQuality`, `StopSounds`.
 
 **Unknown action codes** are reported as `avm1:Unknown_0x..` and skipped, as Flash Player skips them.
@@ -442,6 +447,27 @@ Events, timers, and listeners are queued with the frame scripts and share their 
 
 **`DoInitAction`** scripts run once per movie, the first time their frame is entered, before that frame's `DoAction` scripts, on the root timeline.
 
+#### Loading into clips
+
+The player never fetches anything. A script that loads a movie, an image, or variables asks the host page, through the Player option `loader`:
+
+```js
+const files = new Map([['visor.swf', visorFile], ['img1.jpg', photoFile]]); // Files or Uint8Arrays
+const player = new RetroFlash.Player({
+  canvas,
+  // request: { url, type: 'movie' | 'variables', method: null | 'GET' | 'POST' }
+  loader: (request) => files.get(request.url.split('/').pop()) || null
+});
+```
+
+- **The loader** receives the URL as the script wrote it and decides whether it may be loaded and where its bytes come from. It returns, or resolves to, a `Uint8Array`, another typed array, an `ArrayBuffer`, a `Blob`, or (for variables) a string; `null` or `undefined` refuses the URL (`load:refused`). Without a loader, a load is reported (`load:noLoader`) and nothing changes. A loader that uses `fetch` belongs to the page, which should only allow the URLs it trusts.
+- **Targets:** `GetURL2` with its load-into-clip flag names the clip by a target path or a clip value, from the script's target; the MovieClip methods `loadMovie(url, method)`, `unloadMovie()`, and `loadVariables(url, method)` load into their clip; `_level0` is the root. Other levels are not supported (`load:level`).
+- **Movies:** a movie load empties the clip at once: its children leave with their `unload` events, the clip gets its own `unload`, and its variables and methods are cleared. It keeps its name, depth, transform, and clip events. When the file arrives, the clip plays the loaded movie's root timeline from frame 1 and gets `load`. The loaded movie keeps its own dictionary and SWF version: its scripts follow its version's rules (the built-in objects follow the main movie's), `getSWFVersion()` and `_url` report it, and its `_root` is the main movie's root. A failed load leaves the clip empty.
+- **Images:** a JPEG, PNG, or GIF file is shown at the clip's origin, one pixel per 20 twips. Its pixels come from a budget shared by everything loaded at once (`maxBitmapPixels` per image, `maxTotalBitmapPixels` in all); a movie's bitmaps take from the same budget. Unloading or replacing the content gives them back.
+- **Variables:** the text is read as URL-encoded `name=value` pairs (UTF-8 from SWF 6, Latin-1 before; `+` is a space) and set on the clip as strings; then the clip gets `data`. Variables are never sent: a load with `GET` or `POST` is made without them (`load:sendVariables`).
+- **Timing:** what arrives is shown between frames, after the tick's scripts, or at once when the movie is not playing. A newer movie load into the same clip, or an unload, cancels an older one. At most 8 loads wait for the loader at once; more are dropped (`load:limit`). A file that is not a SWF, JPEG, PNG, or GIF, or that cannot be read, is reported (`load:failed`).
+- **Cleanup:** `stop()`, `load()`, and `destroy()` free loaded content, and drop loads that finish later.
+
 #### Functions and objects
 
 **Objects** (`avm1/objects.js`) have a prototype and their own properties; names are case-insensitive before SWF 7. Arrays keep their elements in order and their `length` in step. Movie clips are objects too: their members are their properties (`_x`, …), `_root` and `_parent`, their variables, their child instances, and then `MovieClip.prototype`. Strings, numbers, and booleans take their members from `String.prototype` and the others; `"abc".length` is 3.
@@ -468,7 +494,7 @@ Events, timers, and listeners are queued with the frame scripts and share their 
 - `String` (`charAt`, `charCodeAt`, `concat`, `indexOf`, `lastIndexOf`, `slice`, `substring`, `substr`, `split`, `toLowerCase`, `toUpperCase`, `String.fromCharCode`), `Number` (`toString(radix)`, the constants), `Boolean`; called as functions they convert;
 - `Math` (every method and constant; `random` uses `Math.random`);
 - `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `escape`, `unescape`, `NaN`, `Infinity`; `trace` and `ASSetPropFlags` do nothing;
-- `MovieClip` methods: `play`, `stop`, `gotoAndPlay`, `gotoAndStop`, `nextFrame`, `prevFrame`, `duplicateMovieClip`, `removeMovieClip`, `getDepth`, `getBytesLoaded`, `getBytesTotal`; `getURL` is ignored and reported.
+- `MovieClip` methods: `play`, `stop`, `gotoAndPlay`, `gotoAndStop`, `nextFrame`, `prevFrame`, `duplicateMovieClip`, `removeMovieClip`, `getDepth`, `getBytesLoaded`, `getBytesTotal`, `loadMovie`, `unloadMovie`, `loadVariables`; `getURL` is ignored and reported.
 
 **Limits against hostile scripts:** prototype chains are followed for at most 256 steps; array indexes from 16,777,216 on are plain properties (an array never grows past that); a string built by concatenation, `join`, `concat`, `escape`, or `fromCharCode` that would pass 16,777,216 characters ends the block (`avm1:budget`).
 
@@ -489,7 +515,7 @@ Events, timers, and listeners are queued with the frame scripts and share their 
   - `end` is the offset of the next record;
   - `args` holds the operands:
     - `Push` values, typed as `string`, `number`, `null`, `undefined`, `register`, `boolean`, or `constant`;
-    - the constant pool, registers, frames, labels, paths, URLs, and the flags of `GetURL2`, `GotoFrame2`, `DefineFunction2`, and `Try`;
+    - the constant pool, registers, frames, labels, paths, URLs, and the flags of `GetURL2`, `GotoFrame2`, `DefineFunction2`, and `Try`. `GetURL2`'s flags are read as Flash Player writes them, not as SWF19 draws them: `0x80` loads variables, `0x40` loads into a clip, and the low two bits are the method (1 `GET`, 2 `POST`; 3 is read as none);
     - function, `With`, and `Try` bodies as offset ranges;
     - branch `offset` and absolute `target`.
 - **Errors:** a record that cannot be used carries an `error`:
@@ -514,6 +540,7 @@ Events, timers, and listeners are queued with the frame scripts and share their 
 Each of these is reported in `getDiagnostics().unsupported` when it is met:
 
 - ActionScript outside the subset above;
+- loads into levels other than `_level0`, `MovieClipLoader`, `LoadVars`, `XML` loading, and sending variables with a load;
 - characters that are placed but not drawn: morph shapes, video, `DefineFont4` text;
 - editing input fields (`text:input`), selection, scrolling, HTML images, kerning and letter spacing, style sheets, and text fields used as masks;
 - button sounds (`DefineButtonSound`), menu tracking (`trackAsMenu` buttons behave as push buttons), masks during hit testing, and buttons nested inside buttons;

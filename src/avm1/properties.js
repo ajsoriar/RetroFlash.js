@@ -230,7 +230,7 @@
       case 11: return slashPath(clip);
       case 13: return obj.name || '';
       case 14: return clip.env.dropTarget && !clip.env.dropTarget.removed ? slashPath(clip.env.dropTarget) : version < 6 ? undefined : '';
-      case 15: return '';                           // the player does not know the movie's URL
+      case 15: return clip.env.url || '';           // a loaded movie's URL; the player does not know the main movie's
       case 16: return 1;                            // high quality
       case 17: return version <= 5 ? 1 : true;      // the stage focus rectangle is on
       case 18: return 5;                            // sound buffer time (no sound yet)

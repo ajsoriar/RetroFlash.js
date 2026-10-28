@@ -114,12 +114,13 @@
     this.buttonSounds = buttonSounds;
     this.root = { type: 'sprite', id: 0, name: 'root', frames: root.frames, labels: root.labels };
   }
-  // Browser only. Decodes every bitmap character, at most BITMAP_DECODE_CONCURRENCY at a time to bound the
-  // memory held by inflated buffers; failures are reported and leave the bitmap undrawn. Bitmaps are taken in
-  // character id order from one pixel budget (maxTotalPixels), so a movie cannot exhaust memory with many images.
+  /* Browser only. Decodes every bitmap character, at most BITMAP_DECODE_CONCURRENCY at a time to bound the
+     memory held by inflated buffers; failures are reported and leave the bitmap undrawn. Bitmaps are taken in
+     character id order from one pixel budget, limits = { maxPixels (per bitmap), remaining (all of them) }, so
+     a movie cannot exhaust memory with many images. Movies loaded into clips share one budget. */
   var BITMAP_DECODE_CONCURRENCY = 4;
-  Movie.prototype.decodeBitmaps = function (maxPixels, maxTotalPixels, report) {
-    var self = this, limits = { maxPixels: maxPixels, remaining: maxTotalPixels };
+  Movie.prototype.decodeBitmaps = function (limits, report) {
+    var self = this;
     var pending = Object.keys(this.characters).map(function (id) { return self.characters[id]; })
       .filter(function (c) { return c.type === 'bitmap'; });
     function worker() {
@@ -130,6 +131,8 @@
         character.width = source.width;
         character.height = source.height;
       }, function (err) {
+        limits.remaining += character.reserved || 0;
+        character.reserved = 0;
         report('render:bitmapDecodeFailed', 'A bitmap could not be decoded and is not drawn.', character.id + ' (' + character.name + '): ' + err.message);
       }).then(worker);
     }
@@ -137,17 +140,24 @@
     for (var i = 0; i < BITMAP_DECODE_CONCURRENCY; i++) workers.push(worker());
     return Promise.all(workers);
   };
-  // Frees decoded bitmap memory when the movie is discarded (ImageBitmap.close, or an empty canvas).
+  // Frees decoded bitmap memory when the movie is discarded. Returns the pixels its bitmaps had reserved.
   Movie.prototype.release = function () {
-    var characters = this.characters;
+    var characters = this.characters, pixels = 0;
     Object.keys(characters).forEach(function (id) {
-      var source = characters[id].source;
-      if (!source) return;
-      if (typeof source.close === 'function') source.close();
-      else { source.width = 0; source.height = 0; }
-      characters[id].source = null;
+      pixels += characters[id].reserved || 0;
+      characters[id].reserved = 0;
+      releaseSource(characters[id]);
     });
+    return pixels;
   };
+  // Frees a decoded image (ImageBitmap.close, or an empty canvas).
+  function releaseSource(holder) {
+    var source = holder.source;
+    if (!source) return;
+    if (typeof source.close === 'function') source.close();
+    else { source.width = 0; source.height = 0; }
+    holder.source = null;
+  }
 
-  Object.assign(M, { buildTimeline: buildTimeline, Movie: Movie });
+  Object.assign(M, { buildTimeline: buildTimeline, Movie: Movie, releaseSource: releaseSource });
 })(typeof window !== 'undefined' ? window : globalThis);

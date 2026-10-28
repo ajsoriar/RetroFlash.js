@@ -6,9 +6,10 @@
    (JPEG/PNG/GIF via the browser decoder, lossless and JPEG alpha in JS) drawn with Canvas 2D, clipDepth masks,
    text (DefineText with embedded glyphs; DefineEditText with embedded or device fonts, word wrap, alignment
    and an HTML subset), AVM1 buttons (DefineButton/DefineButton2: states, hit areas, pointer and keyboard
-   events), and a controlled AVM1 subset for timeline control (stop/play/goto/setTarget) in frame scripts and
-   button actions. It never evaluates JavaScript or navigates. Sound, video and morph shapes are not drawn yet;
-   see getDiagnostics().unsupported.
+   events), and AVM1 (ActionScript 1 and 2) in frame scripts, button actions and clip events. It never
+   evaluates JavaScript, navigates or fetches: movies, images and variables that scripts load come from the
+   host page's `loader` option. Sound, video and morph shapes are not drawn yet; see
+   getDiagnostics().unsupported.
 */
 (function (global) {
   'use strict';
@@ -29,7 +30,10 @@
   function Player(options) {
     options = options || {};
     if (!options.canvas || typeof options.canvas.getContext !== 'function') throw playerError('INVALID_OPTION', 'options.canvas must be a <canvas> element');
+    if (options.loader !== undefined && options.loader !== null && typeof options.loader !== 'function') throw playerError('INVALID_OPTION', 'options.loader must be a function');
     this.canvas = options.canvas;
+    // loader(request) gives the bytes of a URL a script loads, or null to refuse it (see src/README.md).
+    this.loader = options.loader || null;
     this.options = {
       autoplay: !!options.autoplay,
       loop: options.loop !== false,
@@ -151,6 +155,7 @@
     function superseded() { return self.state === 'destroyed' || serial !== self.loadSerial; }
     function report(feature, reason, source) { if (!superseded()) self.report(feature, reason, source); }
     this.pause();
+    this.closeLoads();
     if (this.movie) this.movie.release();
     this.state = 'loading';
     this.movie = this.root = null;
@@ -168,7 +173,7 @@
     if (superseded()) return null;
     try {
       movie = new Movie(swf);
-      await movie.decodeBitmaps(this.limits.maxBitmapPixels, this.limits.maxTotalBitmapPixels, report);
+      await movie.decodeBitmaps({ maxPixels: this.limits.maxBitmapPixels, remaining: this.limits.maxTotalBitmapPixels }, report);
       if (superseded()) { movie.release(); return null; }
       this.movie = movie;
       this.fps = swf.fps > 0 ? swf.fps : 12;
@@ -199,14 +204,31 @@
   };
   // Fresh root timeline at frame 1, with its frame scripts run (as when the movie starts).
   Player.prototype.restart = function () {
-    this.env = createEnv(this.movie, this.report, { actions: this.options.actions, limits: this.limits });
+    this.closeLoads();
+    var self = this, env = this.env = createEnv(this.movie, this.report, {
+      actions: this.options.actions, limits: this.limits, loader: this.loader, maxFileBytes: this.options.maxFileBytes
+    });
+    // A load that finishes while the movie is not playing is shown at once; while playing, at the next frame.
+    env.loads.onSettled = function () {
+      if (self.env !== env || !self.root || self.state === 'playing' || self.state === 'loading' || self.state === 'destroyed') return;
+      try {
+        env.instances = 0;
+        env.scripts.beginUpdate();
+        if (!self.applyLoads()) return;
+        self.render();
+      } catch (err) {
+        self.emit('error', err);
+        return;
+      }
+      self.emit('frame', self.root.frame);
+    };
     var started = now();
     this.env.scripts.clock = function () { return now() - started; }; // getTimer: milliseconds since the start
     this.root = new Clip(this.env, this.movie.root, 0, null);
     this.root.loop = this.options.loop;
     this.root.gotoFrame(1);
     this.env.scripts.run();
-    var self = this, previous = this.input;
+    var previous = this.input;
     this.input = new InputController(this.env, function () { return self.root; });
     if (previous && previous.inside) { this.input.inside = true; this.input.x = previous.x; this.input.y = previous.y; }
     if (this.input.afterTick()) this.env.scripts.run();
@@ -277,10 +299,27 @@
       this.env.scripts.run();
       this.canvas.style.cursor = this.input.cursor();
     }
+    this.applyLoads();
     if (ended) {
       this.emit('end', this.root.frame);
       if (!this.options.loop) this.pause();
     }
+  };
+  /* Shows what loads have brought (display/loader.js) and runs the scripts that queued: the new content's
+     frame-1 scripts and load events. True when something changed. */
+  Player.prototype.applyLoads = function () {
+    var scripts = this.env.scripts;
+    if (!this.env.loads || !this.env.loads.apply()) return false;
+    scripts.run();
+    if (this.input && this.input.afterTick()) {
+      scripts.run();
+      if (this.canvas.style) this.canvas.style.cursor = this.input.cursor();
+    }
+    return true;
+  };
+  // Frees what scripts loaded into clips; loads still waiting for the host are dropped when they finish.
+  Player.prototype.closeLoads = function () {
+    if (this.env && this.env.loads) this.env.loads.close();
   };
   // Runs the setInterval/setTimeout timers that are due, between frames; true when one ran.
   Player.prototype.runTimers = function () {
@@ -334,6 +373,7 @@
     this.domHandlers = [];
     this.state = 'destroyed';
     this.listeners = {};
+    this.closeLoads();
     if (this.movie) this.movie.release();
     this.movie = this.root = this.input = null;
   };

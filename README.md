@@ -26,7 +26,8 @@ RetroFlash.js plays SWF animations on Canvas 2D:
   - movie clips as values and their properties (`_x`, `_alpha`, `_visible`, `_currentframe`, …), `gotoAndPlay`/`gotoAndStop` with computed frames, `tellTarget` with computed targets, and `duplicateMovieClip`/`removeMovieClip`;
   - control flow: `if`/`else` and loops (bounded per frame), `return`, and `ifFrameLoaded`;
   - functions, closures, objects and arrays, classes (`new`, prototypes, `extends`, `super`), `with`, `try`/`catch`/`finally`, `for..in`, the built-in `Object`, `Array`, `String`, `Number`, `Boolean`, `Math` and `Error`, and the `MovieClip` methods (`_root.gotoAndPlay("label")`);
-  - game APIs: clip events (`onClipEvent`, `onEnterFrame`, `onPress`, …), `Key` and `Mouse` with listeners, timers (`setInterval`, `getTimer`), dragging, `hitTest`, `attachMovie`, `createEmptyMovieClip`, `swapDepths`, `Color`, `Stage`, a silent `Sound`, and `DoInitAction`.
+  - game APIs: clip events (`onClipEvent`, `onEnterFrame`, `onPress`, …), `Key` and `Mouse` with listeners, timers (`setInterval`, `getTimer`), dragging, `hitTest`, `attachMovie`, `createEmptyMovieClip`, `swapDepths`, `Color`, `Stage`, a silent `Sound`, and `DoInitAction`;
+  - `loadMovie`, `unloadMovie`, and `loadVariables` into clips: other SWF files and JPEG, PNG, or GIF images. The player never fetches them: the host page gives them through the `loader` option (see [`src/README.md`](./src/README.md#loading-into-clips)).
 
 The `tests/fixtures/valid/fws-game.swf` mini game (a hero moved with the arrow keys, a score) plays in the player. Input fields cannot be edited. Sound and morph shapes are not drawn. All of these are listed in `getDiagnostics().unsupported`.
 
@@ -35,7 +36,7 @@ The code lives in [`src/`](./src/) as classic scripts with no dependencies:
 | File | Role |
 |---|---|
 | `src/swf-reader.js` | Parser (`SWFReader`, v0.6): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, filter lists, clip actions, and exports, and `inflate` |
-| `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/input/`, `src/render/` | Player modules: dictionary, display list, timelines, bitmap decoding, text layout, buttons and input, the AVM1 subset, and the Canvas renderer |
+| `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/input/`, `src/render/` | Player modules: dictionary, display list, timelines, loading into clips, bitmap decoding, text layout, buttons and input, the AVM1 subset, and the Canvas renderer |
 | `src/retroflash.js` | Player API (`RetroFlash`, v0.4) |
 | `src/modules.json` | The load order of every script above |
 

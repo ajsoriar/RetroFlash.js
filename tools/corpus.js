@@ -3,14 +3,17 @@
    matrix of what each file uses and where it falls short, by layer:
      parser  the reader (diagnostics, tags it does not decode),
      vm      the AVM1 interpreter (budgets, malformed or unknown actions, uncaught throws),
-     api     built-in objects and policies (objects not implemented, URLs never loaded, sound),
+     api     built-in objects and policies (objects not implemented, navigation, loads, sound),
      render  drawing and text (characters or features not drawn),
      input   buttons and pointer handling.
    Each file runs the same way every time: a fixed clock (the frame rate), a fixed random sequence, a fixed
    number of frames, and a pointer probe (move to the centre, press, release) halfway. Bitmaps are not decoded
    (that needs a browser), and drawing goes to a stand-in canvas, so pixels are not compared.
+   With --resources DIR, a URL a script loads (loadMovie, loadVariables) is answered with the file of DIR named
+   like its last path segment; images are then only checked by their header. Without it, loads are refused.
+   Loads are shown at the next frame boundary, after the host answered.
 
-   Usage: node tools/corpus.js [--frames N] [--json file] [--md file] [--versions] <file.swf | folder>...
+   Usage: node tools/corpus.js [--frames N] [--resources DIR] [--json file] [--md file] [--versions] <file.swf | folder>...
    Only run it on SWF files you are allowed to use; never commit third-party files. */
 const fs = require('fs');
 const path = require('path');
@@ -32,7 +35,7 @@ function standInCanvas() {
 // The layer of a diagnostic feature name.
 function layerOf(feature) {
   if (/^(tag:|actionscript:DoABC|timeline:)/.test(feature) || /^[A-Z]\w*\.\w+$/.test(feature)) return 'parser';
-  if (feature === 'avm1:objectValue' || /^avm1:GetURL/.test(feature) || /^sound:/.test(feature)) return 'api';
+  if (feature === 'avm1:objectValue' || /^avm1:GetURL/.test(feature) || /^(sound|load):/.test(feature)) return 'api';
   if (/^avm1:/.test(feature)) return 'vm';
   if (/^(render|text):/.test(feature)) return 'render';
   if (/^input:/.test(feature)) return 'input';
@@ -44,9 +47,29 @@ function fixedRandom(seed) {
   return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 }
 
+// A host loader that answers each URL with the file of `dir` named like its last path segment, or refuses it.
+function folderLoader(dir) {
+  return (request) => {
+    let file = String(request.url).split(/[?#]/)[0];
+    file = file.slice(file.lastIndexOf('/') + 1);
+    try { file = decodeURIComponent(file); } catch (err) { /* keep it as written */ }
+    const full = path.join(dir, path.basename(file));
+    return file && fs.existsSync(full) && fs.statSync(full).isFile() ? new Uint8Array(fs.readFileSync(full)) : null;
+  };
+}
+// Images loaded in Node are checked by their header only (no browser decoder); their pixels are reserved.
+async function headerOnlyImage(bytes, limits, name) {
+  const { RetroFlash } = require('../tests/support/load-reader');
+  const I = RetroFlash.internals, size = I.imageSize(bytes, I.imageFormat(bytes));
+  if (!size) throw new Error('No image size found in the header of ' + name);
+  const reserved = I.reservePixels(limits, size.width, size.height);
+  return { source: { width: size.width, height: size.height, close() {} }, width: size.width, height: size.height, reserved };
+}
+
 /* Runs one SWF. Returns { name, sha256, status, version, avm, width, height, fps, frames, tags, codeTags,
-   actions, layers: { parser|vm|api|render|input: { status, features: { name: count } } }, error }. */
-async function analyze(bytes, name, { frames = 60 } = {}) {
+   actions, layers: { parser|vm|api|render|input: { status, features: { name: count } } }, error }.
+   options: { frames (60), resources (a folder that answers loads) }. */
+async function analyze(bytes, name, { frames = 60, resources = null } = {}) {
   installCanvasStandIns();
   const { SWFReader, RetroFlash } = require('../tests/support/load-reader');
   const I = RetroFlash.internals;
@@ -93,7 +116,9 @@ async function analyze(bytes, name, { frames = 60 } = {}) {
   let now = 0;
   try {
     movie = new I.Movie(swf);
-    env = I.createEnv(movie, report);
+    env = I.createEnv(movie, report, { loader: resources ? folderLoader(resources) : null });
+    env.loads.decodeImage = headerOnlyImage;
+    env.loads.decodeBitmaps = false; // as for the main movie: bitmaps need a browser
     env.scripts.clock = () => now;
     env.scripts.random = fixedRandom(0x5eed);
     root = new I.Clip(env, movie.root, 0, null);
@@ -111,6 +136,11 @@ async function analyze(bytes, name, { frames = 60 } = {}) {
   let steps = 0;
   const begin = () => { steps += env.scripts.steps; env.scripts.beginUpdate(); };
   const update = () => { begin(); env.scripts.run(); if (input.afterTick()) env.scripts.run(); };
+  // What arrived from the loader is shown at the frame boundary, as the player does.
+  const loads = async () => {
+    await env.loads.idle();
+    if (env.loads.apply()) { env.scripts.run(); if (input.afterTick()) env.scripts.run(); }
+  };
   const draw = () => {
     try { renderer.render(stage, root); } catch (err) { fail('render', err); }
   };
@@ -132,8 +162,10 @@ async function analyze(bytes, name, { frames = 60 } = {}) {
         if (input.down()) update();
         if (input.up()) update();
       }
+      await loads();
       if (f % 10 === 0 || f === frames) draw();
     }
+    env.loads.close();
     result.actions = { steps: steps + env.scripts.steps, cachedBlocks: env.scripts.cache.size, decodedBytes: env.scripts.decoded.used };
   } catch (err) {
     fail('vm', err);
@@ -192,6 +224,7 @@ if (require.main === module) {
     let json = null, md = null;
     for (let i = 0; i < args.length; i++) {
       if (args[i] === '--frames') options.frames = Number(args[++i]);
+      else if (args[i] === '--resources') options.resources = args[++i];
       else if (args[i] === '--json') json = args[++i];
       else if (args[i] === '--md') md = args[++i];
       else if (args[i] === '--versions') inputs.push('--versions');
@@ -205,7 +238,7 @@ if (require.main === module) {
       return;
     }
     if (!inputs.length) {
-      console.error('Usage: node tools/corpus.js [--frames N] [--json file] [--md file] <file.swf | folder>...  |  --versions');
+      console.error('Usage: node tools/corpus.js [--frames N] [--resources DIR] [--json file] [--md file] <file.swf | folder>...  |  --versions');
       process.exit(2);
     }
     rows = await matrix(collect(inputs), options);

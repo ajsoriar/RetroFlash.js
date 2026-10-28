@@ -259,11 +259,14 @@
      button's hit area, enters frames without running their scripts. */
   ActionScheduler.prototype.mark = function () { return this.queue.length; };
   ActionScheduler.prototype.dropSince = function (mark) { this.queue.length = mark; };
-  // The decoded code of a block. Its records are decoded once per movie, within the `decoded` budget.
-  ActionScheduler.prototype.codeOf = function (block) {
+  /* The decoded code of a block run for `clip`. Its records are decoded once, within the `decoded` budget
+     shared with the movies loaded into clips. A DoAction tag is read from the SWF file of the clip's movie,
+     whose version the code follows. */
+  ActionScheduler.prototype.codeOf = function (block, clip) {
     var code = this.cache.get(block);
     if (!code) {
-      code = new ActionCode(block.bytes || this.swf.getTagData(block), this.version, this.decoded);
+      var swf = (clip && clip.env && clip.env.swf) || this.swf;
+      code = new ActionCode(block.bytes || swf.getTagData(block), swf.version, this.decoded);
       this.cache.set(block, code);
     }
     return code;
@@ -306,7 +309,7 @@
      parent). A block that decoded no record (an empty block, or one met after the decoding budget was spent)
      is not kept in the cache: the budget does not pay for it. */
   function executeAVM1(scheduler, clip, block) {
-    var code = scheduler.codeOf(block), source = (block.label || 'DoAction') + ' at offset ' + block.offset;
+    var code = scheduler.codeOf(block, clip), source = (block.label || 'DoAction') + ' at offset ' + block.offset;
     guarded(scheduler, source, function () { new Activation(scheduler, clip, code, source).run(); });
     if (!code.records.size) scheduler.cache.delete(block);
   }
@@ -321,11 +324,12 @@
      within [start, end), the clip it runs for (`clip`, the base clip), the timeline actions address (`target`,
      changed by SetTarget), its own stack, its constant pool, the local registers of a DefineFunction2 function
      (the movie's four global registers otherwise), `this` and the scope chain (avm1/variables.js). It is also
-     the context (`ctx`) that variables resolve in. */
+     the context (`ctx`) that variables resolve in. The SWF version is the one of the movie the code comes from,
+     which differs from the main movie's for a movie loaded into a clip. */
   function Activation(scheduler, clip, code, source, call) {
     this.scheduler = scheduler;
     this.rt = runtimeOf(scheduler);
-    this.version = scheduler.version;
+    this.version = code.version;
     this.clip = clip;
     this.target = clip;
     this.root = clip ? clip.root() : null;
@@ -416,6 +420,13 @@
       if (action.error && action.error.code === 'TRUNCATED_RECORD') return this.malformed();
       this.pc = action.end;
     }
+    return true;
+  };
+  // A load into "_levelN" (loadMovieNum, loadVariablesNum): _level0 is the root; other levels are not supported.
+  Activation.prototype.loadLevel = function (url, target, kind, method) {
+    url = toAvmString(url, this.version);
+    if (M.levelOf(target) === 0) M.loadInto(this.root, url, kind, method, this.report.bind(this));
+    else this.report('load:level', 'Movies loaded into levels other than _level0 are not supported yet; nothing was loaded.', target + ' ← ' + url);
     return true;
   };
   // The timeline that GotoFrame2, CloneSprite, RemoveSprite and Call address: the target, or the root without one.
@@ -591,7 +602,7 @@
      the parameters without a register, `arguments` and `super`; DefineFunction2 preloads this, arguments,
      super, _root, _parent and _global into its registers from register 1, as its flags ask. */
   function callBytecode(scheduler, fn, thisValue, args, caller) {
-    var rt = scheduler.runtime, def = fn.def, version = scheduler.version, flags = def.flags;
+    var rt = scheduler.runtime, def = fn.def, version = def.code.version, flags = def.flags;
     var fallback = caller ? caller.targetOrRoot() : def.baseClip;
     var base = version >= 6 && def.baseClip && !def.baseClip.removed ? def.baseClip : isClip(thisValue) ? thisValue : fallback;
     var scopes = version >= 6 ? def.scopes.slice() : [{ kind: 'global', obj: rt.global }, { kind: 'target', obj: base }];
@@ -658,7 +669,7 @@
     rt.callDepth++;
     try {
       clip.def.frames[n - 1].forEach(function (tag) {
-        if (tag.code === 12) new Activation(scheduler, clip, scheduler.codeOf(tag), 'Call of frame ' + n).run();
+        if (tag.code === 12) new Activation(scheduler, clip, scheduler.codeOf(tag, clip), 'Call of frame ' + n).run();
       });
     } finally {
       rt.callDepth--;
@@ -830,13 +841,26 @@
       case 0x28: // EndDrag
         if (this.clip) stopDrag(this.clip.env);
         return true;
-      case 0x83: // GetURL
-        this.report('avm1:GetURL', 'GetURL is ignored: the player never navigates, opens windows or loads URLs.');
+      case 0x83: // GetURL: a "_levelN" target loads a movie there (loadMovieNum); anything else would navigate.
+        if (action.error) return this.malformed();
+        if (M.levelOf(args.target) >= 0) return this.loadLevel(args.url, args.target, 'movie', 0);
+        this.report('avm1:GetURL', 'GetURL is ignored: the player never navigates or opens windows.', args.url);
         return true;
-      case 0x9a: // GetURL2
-        this.pop();
-        this.pop();
-        this.report('avm1:GetURL2', 'GetURL2 is ignored: the player never navigates, opens windows or loads URLs or variables.');
+      case 0x9a: // GetURL2: the target is above the URL. A clip target (or a level) loads into it.
+        if (action.error) return this.malformed();
+        b = this.pop();
+        a = this.pop();
+        if (a === UNKNOWN_VALUE || b === UNKNOWN_VALUE) return this.unknownValue(action);
+        c = args.loadVariables ? 'variables' : 'movie';
+        if (args.loadTarget) {
+          b = this.clipOf(b, this.target || this.clip, true);
+          if (b === UNKNOWN_VALUE) return this.unknownValue(action);
+          M.loadInto(b, toAvmString(a, version), c, args.sendVarsMethod, this.report.bind(this));
+          return true;
+        }
+        b = toAvmString(b, version);
+        if (M.levelOf(b) >= 0) return this.loadLevel(a, b, c, args.sendVarsMethod);
+        this.report('avm1:GetURL2', 'GetURL2 is ignored: the player never navigates or opens windows.', toAvmString(a, version));
         return true;
 
       // Functions and calls

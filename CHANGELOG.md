@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`GetURL2` flags.** The decoder read them as the SWF 19 drawing shows them, so the load-into-clip flag (`0x40`, written by `loadMovie`) was taken for the `GET` method. They are now read as Flash Player and the authoring tools write them: `0x80` loads variables, `0x40` loads into a clip, the low two bits are the method (3 is read as none).
+
 ### Changed
 
 - **The player source is split into modules.** `src/retroflash.js` is now only the public API. The rest is in `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/input/`, and `src/render/`, as classic scripts loaded in the order of `src/modules.json`. Behaviour and the public API do not change.
@@ -45,6 +49,13 @@
 
 ### Added
 
+- **Loading into clips:**
+  - new Player option `loader`: a function from the host page that gives the bytes of a URL a script loads, or refuses it; the player itself still never fetches or navigates;
+  - `loadMovie` and `unloadMovie` (`GetURL2` with a clip target, `GetURL`/`GetURL2` with `_level0`, and the MovieClip methods): a SWF file plays inside the clip with its own dictionary and SWF version, and the clip keeps its place and clip events (`unload` when emptied, `load` when the movie arrives); a JPEG, PNG, or GIF file is shown at the clip's origin;
+  - `loadVariables` into a clip, with its `data` event; `_url`, `getSWFVersion()`, `getBytesLoaded()`, and `getBytesTotal()` describe the loaded content;
+  - loaded bitmaps share one pixel budget and are freed when unloaded, on `stop()`, on `load()`, and on `destroy()`; a failed bitmap decode now gives its pixels back to the budget;
+  - `src/display/loader.js` (`LoadQueue`); the demo plays a SWF with the extra files it loads, and `tools/corpus.js --resources DIR` answers loads from a folder;
+  - **Tests:** `tests/unit/avm1-load.test.js`.
 - **Compatibility corpus (Hito H):**
   - `tools/corpus.js` (`npm run corpus -- files…`) runs SWF files in Node, the same way every time (fixed clock, fixed random sequence, 60 frames, a pointer probe), and writes a Markdown or JSON matrix that sorts every diagnostic into a layer: parser, vm, api, render, or input;
   - the version matrix (`--versions`): one bytecode probe per version-dependent rule, run in SWF 4 to 10;

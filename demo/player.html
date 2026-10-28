@@ -6,7 +6,7 @@
 <style>
 :root{color-scheme:dark;font-family:system-ui,sans-serif}body{max-width:1050px;margin:35px auto;padding:0 18px;background:#111827;color:#e5e7eb}
 h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}a{color:#67e8f9}
-#drop{display:block;padding:22px;border:2px dashed #6b7280;border-radius:14px;text-align:center;cursor:pointer;margin:20px 0;background:#1f2937}#drop.over{border-color:#67e8f9}input[type=file]{display:none}
+#drop{display:block;padding:22px;border:2px dashed #6b7280;border-radius:14px;text-align:center;cursor:pointer;margin:20px 0;background:#1f2937}#drop.over{border-color:#67e8f9}input[type=file]{display:none}.extra label{color:#67e8f9;cursor:pointer;text-decoration:underline}
 #stage{display:block;max-width:100%;border:1px solid #374151;background:#000}
 .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
 button{padding:7px 14px;border:1px solid #4b5563;border-radius:8px;background:#1f2937;color:#e5e7eb;cursor:pointer;font:inherit}button:hover:not(:disabled){border-color:#67e8f9}button:disabled{opacity:.45;cursor:default}
@@ -22,9 +22,13 @@ Static text uses the movie's embedded glyphs. Text fields use embedded or device
 Frame scripts run through a controlled AVM1 subset, including expressions, control flow, functions, objects, clip events and common MovieClip APIs; unsupported features are reported below.
 Buttons respond to the mouse (hover, press, release) and to the keyboard once the canvas has focus.
 Sound, morph shapes and text input are not supported yet; what a movie uses is listed below.
+The player never fetches anything: when a script loads a movie, an image or variables (<code>loadMovie</code>, <code>loadVariables</code>), the page answers with the file of the same name added below.
 Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code>, <code>fws-buttons.swf</code> or <code>fws-text.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>
 <input id="file" type="file" accept=".swf,application/x-shockwave-flash">
+<p class="extra"><label for="extra">Add files the movie loads</label> (SWF, JPEG, PNG, GIF, variables): <span id="extras">none</span><br>
+Add these before opening the main SWF. For the launcher demo, add <code>visor.swf</code> here, then open <code>visor-launcher-andres.swf</code>. The gallery also requests <code>img1.jpg</code> to <code>img7.jpg</code>. You can also drop the launcher first and its dependencies together onto the SWF area. If the launcher is already open, reopen it after adding files; refused requests are not retried.</p>
+<input id="extra" type="file" multiple>
 <p id="status">No movie loaded.</p>
 <canvas id="stage" width="480" height="320"></canvas>
 <div class="controls">
@@ -53,6 +57,7 @@ Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</
 <script src="../src/avm1/interpreter.js"></script>
 <script src="../src/display/movie.js"></script>
 <script src="../src/display/clip.js"></script>
+<script src="../src/display/loader.js"></script>
 <script src="../src/display/button.js"></script>
 <script src="../src/input/hit-test.js"></script>
 <script src="../src/input/input.js"></script>
@@ -62,7 +67,11 @@ Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</
 (function(){
   'use strict';
   var $=function(id){return document.getElementById(id);};
-  var player=new RetroFlash.Player({canvas:$('stage')}), buttons=['play','pause','stop','step'];
+  // Files the movie may load, by name: a URL is answered with the file whose name is its last path segment.
+  var resources=new Map();
+  function nameOf(url){var s=String(url).split(/[?#]/)[0];s=s.slice(s.lastIndexOf('/')+1);try{s=decodeURIComponent(s);}catch(e){}return s.toLowerCase();}
+  function addResources(files){Array.prototype.forEach.call(files,function(f){resources.set(f.name.toLowerCase(),f);});$('extras').textContent=resources.size?Array.from(resources.values(),function(f){return f.name;}).join(', '):'none';}
+  var player=new RetroFlash.Player({canvas:$('stage'),loader:function(request){return resources.get(nameOf(request.url))||null;}}), buttons=['play','pause','stop','step'];
   function setEnabled(on){buttons.concat('seek').forEach(function(id){$(id).disabled=!on;});}
   function showFrame(){var info=player.getInfo();$('frame').textContent='frame '+info.currentFrame+' / '+info.frameCount+(info.rootPlaying?'':' · stopped by script');$('seek').value=info.currentFrame;}
   function showUnsupported(){
@@ -90,10 +99,17 @@ Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</
   $('step').addEventListener('click',function(){player.pause();player.step();});
   $('seek').addEventListener('input',function(){player.pause();player.seek(Number($('seek').value));});
   $('file').addEventListener('change',function(){open($('file').files[0]);});
+  $('extra').addEventListener('change',function(){addResources($('extra').files);});
   var drop=$('drop');
   drop.addEventListener('dragover',function(e){e.preventDefault();drop.classList.add('over');});
   drop.addEventListener('dragleave',function(){drop.classList.remove('over');});
-  drop.addEventListener('drop',function(e){e.preventDefault();drop.classList.remove('over');open(e.dataTransfer.files[0]);});
+  // Several files dropped at once: the first SWF is played, the others are files it may load.
+  drop.addEventListener('drop',function(e){
+    e.preventDefault();drop.classList.remove('over');
+    var files=Array.from(e.dataTransfer.files),main=files.find(function(f){return /\.swf$/i.test(f.name);})||files[0];
+    addResources(files.filter(function(f){return f!==main;}));
+    open(main);
+  });
 })();
 </script>
 </body>

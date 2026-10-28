@@ -78,6 +78,7 @@
     if (!container) {
       if (!c) return null;
       if (c.type === 'shape') return c.shape.bounds;
+      if (c.type === 'morphShape') return M.morphBounds(c, obj.ratio);
       if (c.type === 'text') return c.text.bounds;
       if (c.type === 'editText') return (obj.layout || c.layout || c.field).bounds;
       if (c.type === 'bitmap') return { xMin: 0, yMin: 0, xMax: c.width * 20, yMax: c.height * 20 };

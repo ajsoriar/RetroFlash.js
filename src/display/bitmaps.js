@@ -203,5 +203,5 @@
 
   Object.assign(M, { losslessByteLength: losslessByteLength, decodeLossless: decodeLossless, cleanJpeg: cleanJpeg,
     mergeJpegTables: mergeJpegTables, imageSize: imageSize, reservePixels: reservePixels, imageFormat: imageFormat,
-    decodeImage: decodeImage, decodeBitmap: decodeBitmap });
+    decodeImage: decodeImage, decodeBitmap: decodeBitmap, createCanvas: createCanvas });
 })(typeof window !== 'undefined' ? window : globalThis);

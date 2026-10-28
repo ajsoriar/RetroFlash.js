@@ -3,6 +3,7 @@
   "core/base.js",
   "core/math.js",
   "render/geometry.js",
+  "render/morph.js",
   "display/bitmaps.js",
   "text/fonts.js",
   "text/html.js",

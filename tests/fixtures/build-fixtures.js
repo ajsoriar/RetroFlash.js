@@ -14,6 +14,8 @@ const { buildText } = require('./text');
 const { buildGame } = require('./game');
 const { buildBrowser } = require('./browser');
 const { buildSound } = require('./sound');
+const { buildMorph } = require('./morph');
+const { buildPaint } = require('./paint');
 
 const fileAttributes = (raw = 0) => tag(T.FileAttributes, body((w) => w.u32(raw)));
 const background = (r, g, b) => tag(T.SetBackgroundColor, body((w) => w.rgb({ r, g, b })));
@@ -230,6 +232,28 @@ const fixtures = [
     build: buildSound,
     expect: {
       signature: 'FWS', version: 6, width: 320, height: 200, fps: 12, frameCount: 12, actualFrameCount: 12, tags: 39,
+      diagnostics: [], unsupported: []
+    }
+  },
+  {
+    file: 'valid/fws-morph.swf',
+    description: 'Morph shape fixture (tests/fixtures/morph.js): a DefineMorphShape from a square of straight edges to a circle ' +
+      'of curves, with solid fill and outline changes, and a DefineMorphShape2 whose rectangle, linear gradient (matrix, ' +
+      'colours and stop positions) and round-capped outline change; both placed at a new ratio on each of 11 frames.',
+    build: buildMorph,
+    expect: {
+      signature: 'FWS', version: 8, width: 320, height: 200, fps: 12, frameCount: 11, actualFrameCount: 11, tags: 38,
+      diagnostics: [], unsupported: []
+    }
+  },
+  {
+    file: 'valid/fws-paint.swf',
+    description: 'Paint fixture (tests/fixtures/paint.js): a clipped bitmap fill reaching past its bitmap, a tinted bitmap, ' +
+      'repeating and reflecting linear, radial and focal gradients, a gradient line fill, a non-scaling stroke in a scaled ' +
+      'sprite, a sprite with a DefineScalingGrid, and a text field using a DefineFont4 without a font file.',
+    build: buildPaint,
+    expect: {
+      signature: 'FWS', version: 8, width: 480, height: 320, fps: 12, frameCount: 1, actualFrameCount: 1, tags: 24,
       diagnostics: [], unsupported: []
     }
   },

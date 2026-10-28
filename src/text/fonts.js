@@ -40,7 +40,10 @@
       if (rec.fontId !== undefined) {
         font = characters[rec.fontId];
         height = rec.height;
-        if (!font || font.type !== 'font') {
+        if (font && font.type === 'font4') {
+          report('render:font4Text', 'Static text cannot use the glyphs of a DefineFont4 font; those glyphs are not drawn.', id + ' → ' + rec.fontId);
+          font = null;
+        } else if (!font || font.type !== 'font') {
           report('render:missingFont', 'Static text refers to a font that is not defined; those glyphs are not drawn.', id + ' → ' + rec.fontId);
           font = null;
         }

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Drawing details.**
+  - Per-channel colour transforms on bitmaps tint a cached copy of the image; alpha-only transforms stay an opacity.
+  - Clipped bitmap fills extend their edge pixels past the bitmap, as Flash Player does.
+  - Reflect and repeat gradient spread modes, for linear, radial and focal gradients (`render:gradientSpread` now means more than 512 repetitions).
+  - Gradient and bitmap line fills are painted through a canvas-sized layer.
+  - `NoHScale`/`NoVScale` strokes keep their stage width.
+  - 9-slice scaling (`DefineScalingGrid`) for the shapes of scaled sprites and buttons.
+  - `DefineFont4` fonts are loaded with `FontFace` and used by text fields that name them (`text:font4` when they cannot be; `render:font4Text` for static text).
+  - New fixture `tests/fixtures/valid/fws-paint.swf`.
+- **Morph shapes.** `DefineMorphShape` and `DefineMorphShape2` are decoded (paired fill and line styles, including focal and bitmap fills and `MORPHLINESTYLE2`; start and end edges) and drawn at each placement's ratio: edges paired in order (a straight edge facing a curve becomes a curve), points rounded to whole twips so contours stay closed, and colours, widths, gradients and bitmap matrices interpolated. They mask, hit-test and report bounds as the shape they show. New diagnostic `render:morphEdges` (edges that do not pair up); `render:DefineMorphShape` and `render:DefineMorphShape2` are gone. New fixture `tests/fixtures/valid/fws-morph.swf`.
 - **Sound.** Movies play sound through an audio backend, the new Player option `audio`; by default `RetroFlash.createWebAudioBackend()` when the browser has Web Audio, and `audio: false` turns it off. The new option `volume` and `player.setVolume()`/`getVolume()` scale it; `pause()` suspends sounds and `play()` resumes them.
   - **Reader:** `DefineSound`, `StartSound`, `StartSound2`, `DefineButtonSound` (all four state sounds), `SoundStreamHead`, `SoundStreamHead2` and `SoundStreamBlock` are decoded, with their `SOUNDINFO` (in and out points, loops, envelope, sync flags).
   - **Codecs:** PCM and ADPCM are decoded in JavaScript; MP3 is decoded by the browser, ahead of playback. Nellymoser and Speex are reported, not played.

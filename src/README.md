@@ -76,6 +76,7 @@ Values follow the SWF specification:
   - for `DefineShape4` only: `edgeBounds` and the fill-winding and scaling-stroke flags.
 
   Colours are always `{r, g, b, a}`.
+- Morph shapes (with `tests/fixtures/valid/fws-morph.swf`): `DefineMorphShape` and `DefineMorphShape2` give `characterId`, `morphVersion`, `startBounds`, `endBounds`, `fillStyles` and `lineStyles` as `{ start, end }` pairs in the `DefineShape` format (colours always RGBA; focal gradients in both tags), `startRecords` (with the style changes) and `endRecords` (edges and moves only; their NumFillBits and NumLineBits are not used). `DefineMorphShape2` adds `startEdgeBounds`, `endEdgeBounds`, `usesNonScalingStrokes`, `usesScalingStrokes`, and `MORPHLINESTYLE2` caps, joins and fills. The end edges are read right after the start edges.
 - Bitmap headers are decoded (since v0.3, with `tests/fixtures/valid/fws-bitmaps.swf`). Pixel data stays in the tag body, and the offsets below are relative to `getTagData(tag)`.
   - `DefineBits`, `DefineBitsJPEG2`, `DefineBitsJPEG3`, and `DefineBitsJPEG4` give `characterId`, `imageStart`, `imageEnd`, and `imageFormat` (`jpeg`, `png`, `gif`, or `unknown`, sniffed). JPEG3/4 also give `alphaStart` when an alpha plane is present, and JPEG4 gives `deblockParam`.
   - `DefineBitsLossless` and `DefineBitsLossless2` give `characterId`, `losslessVersion`, `bitmapFormat` (3, 4, or 5), `width`, `height`, `colorTableSize`, and `dataStart`.
@@ -101,6 +102,8 @@ Values follow the SWF specification:
     Tool variations are tolerated: a font without glyphs may omit `CodeTableOffset`, and the glyph bounds and kerning table may be missing at the end of the tag. Glyph offsets outside the tag fail with `INVALID_OFFSET`.
   - `DefineFont` gives `fontId` and `glyphs` (their codes are `null`). `DefineFontInfo` and `DefineFontInfo2` give its `name`, style flags, and `codes`.
   - `DefineFontName` gives `fontId`, `name`, and `copyright`. `DefineFontAlignZones` and `CSMTextSettings` keep only their ids and mode bits; their bodies only tune anti-aliasing.
+  - `DefineFont4` gives `fontId`, `name`, `bold`, `italic`, `hasFontData`, and `dataStart`, where its OpenType (CFF) font file starts in `getTagData(tag)`.
+- `DefineScalingGrid` gives `characterId` and `splitter`, the 9-slice grid as a RECT in twips (with `tests/fixtures/valid/fws-paint.swf`).
   - `DefineText` and `DefineText2` give `characterId`, `bounds`, `matrix`, and `records`.
     - Each record has the fields it sets: `fontId` with `height`, `color`, `x`, and `y`. Its `glyphs` are `{ index, advance }`.
     - A list without its end byte is accepted with a `TEXT_END_MISSING` warning.
@@ -116,8 +119,8 @@ Values follow the SWF specification:
 ## Limitations
 
 - The reader itself does not render. Playback is handled by `retroflash.js` (see below).
-- Video, morph shapes, and `DefineFont4` are indexed but not decoded. Bitmap pixels and sound samples are decoded by the player.
-- Not parsed yet: `PlaceObject2`/`PlaceObject3` clip actions. Filter parameters are skipped, not decoded.
+- Video is indexed but not decoded. Bitmap pixels and sound samples are decoded by the player.
+- Filter parameters are skipped, not decoded.
 - `ZWS` (LZMA) is rejected. `CWS` needs native `DecompressionStream`; there is no JavaScript inflate fallback yet, so CWS fails with `CWS_UNSUPPORTED` in older browsers.
 - Strings in files older than SWF 6 used the author's locale encoding, which the file does not record; they are decoded as Latin-1.
 - `End` and any tag after the last `ShowFrame` report `frame = actualFrameCount + 1`, as in v0.1.
@@ -187,6 +190,7 @@ Each player module is a classic script. It takes what it needs from the internal
 | `core/base.js` | The module namespace, the version, limits, and player errors |
 | `core/math.js` | Matrices and colour transforms |
 | `render/geometry.js` | Shape records to fill and stroke commands, shared by the renderer and hit testing |
+| `render/morph.js` | The shape of a morph shape at a placement's ratio |
 | `display/bitmaps.js` | Bitmap decoding and pixel budgets |
 | `text/fonts.js`, `text/html.js`, `text/layout.js` | Fonts and static text, the HTML subset, and text field layout |
 | `avm1/decoder.js` | AVM1 decoding (`ActionCode`) |
@@ -233,7 +237,8 @@ The **`AudioController`** (`env.audio`, in `audio/mixer.js`) belongs to the play
   - JPEG, PNG, and GIF go through the browser decoder (`createImageBitmap`). Every `FF D9 FF D8` sequence is removed from JPEG data, and `DefineBits` is joined with `JPEGTables`.
   - The JPEG3/4 alpha plane is applied in JavaScript, treating the colour data as premultiplied, as Flash stores it.
   - Lossless formats 3, 4, and 5 are decoded in JavaScript. Lossless2 data is premultiplied and is converted for Canvas.
-  - Bitmap fills are clipped or repeating, smoothed or not, as the fill type says. A bitmap placed directly is drawn at 20 twips per pixel.
+  - Bitmap fills are clipped or repeating, smoothed or not, as the fill type says. A clipped fill that reaches past its bitmap extends the bitmap's edge rows, columns and corner pixels over the rest of the shape, as Flash Player does. A bitmap placed directly is drawn at 20 twips per pixel.
+  - **Colour transforms:** one that only scales alpha becomes the image's opacity. Any other is applied to the pixels of a copy of the bitmap (the four latest kept per bitmap); without an alpha offset the alpha multiplier stays an opacity, so fades do not make copies. A bitmap larger than 2048 × 2048 pixels, one whose pixels the page cannot read (a cross-origin image), or no canvas to tint it on, gets only the alpha multiplier (`render:bitmapColorTransform`).
   - A bitmap that cannot be decoded is reported and not drawn.
   - **Memory limits:** pixels are reserved before decoding. Lossless bitmaps use the tag's width and height. JPEG, PNG, and GIF use the size in the image header (JPEG `SOFn`, PNG `IHDR`, GIF logical screen); an image without a readable size is refused, and a decoded image larger than its header declared is discarded. Each bitmap is limited by `maxBitmapPixels`, and all bitmaps of a movie together by `maxTotalBitmapPixels`, in character id order. A refused bitmap is reported (`render:bitmapDecodeFailed`, with `BITMAP_TOO_LARGE`, `BITMAP_BUDGET`, or `BITMAP_FORMAT`) and not drawn.
   - Bitmap memory is released when the movie is replaced by another `load()` or the player is destroyed.
@@ -243,15 +248,24 @@ The **`AudioController`** (`env.audio`, in `audio/mixer.js`) belongs to the play
 - **Shapes:**
   - Edges are grouped by fill style, with FillStyle0 edges reversed, and linked into closed contours.
   - Fills use the even-odd rule, or non-zero when `DefineShape4` sets the winding flag.
-  - Gradients use the SWF ±16384-twip gradient square, transformed by the gradient matrix.
+  - Gradients use the SWF ±16384-twip gradient square, transformed by the gradient matrix. Reflect and repeat spread modes become one Canvas gradient over every period the fill reaches, each with the stops in order (reversed every other period when reflecting); a focal gradient's periods continue its cone. A gradient that would repeat more than 512 times over its fill is drawn as pad (`render:gradientSpread`). Linear-RGB interpolation is drawn as sRGB (`render:gradientLinearRGB`).
   - Colour transforms are applied exactly to vector colours.
   - Strokes are at least one device pixel wide. `DefineShape4` caps and joins are honoured.
+  - `LINESTYLE2` `NoHScale` and `NoVScale` keep a stroke from scaling with its object: with both, it keeps the width it would have on the stage; with one, it scales only with the object's scale on the other axis.
+  - Gradient and bitmap line fills (`LINESTYLE2` `HasFill`) are painted where the stroke is, through a layer the size of the canvas. Without a canvas for the layer they take their first colour (`render:lineFill`).
+- **9-slice scaling** (`DefineScalingGrid`): a scaled sprite or button with a grid keeps the parts of its shapes outside the grid at their size. Corners keep it both ways, the edges in one direction, and the centre takes the rest; scaled below the size of its corners, the corners shrink evenly. As in Flash Player, only shapes directly in the clip follow the grid (nested clips, text and bitmaps scale normally), and a rotated or skewed clip scales normally. The grid applies to drawing; hit testing, masks and strokes use the plain shape.
+- **Morph shapes** (`DefineMorphShape`, `DefineMorphShape2`): each placement draws the shape its ratio selects (PlaceObject2/3 `Ratio`; 0, also when missing, is the start shape and 65535 the end shape), and is masked, hit-tested and measured (`getBounds`, between the start and end bounds) as that shape.
+  - Start and end records are walked side by side, each with its own pen: a style change (taken from the start shape) or a move in either list stands alone, and every other start edge pairs with the next end edge. A straight edge paired with a curve becomes a curve whose control point is its midpoint.
+  - Points are interpolated as absolute positions and rounded to whole twips, so contours stay closed. Colours, line widths, gradient matrices, stop positions and colours, focal points, and bitmap matrices are interpolated too.
+  - Edges left over in one list are not drawn and are reported once (`render:morphEdges`).
+  - The interpolated shapes of the last 32 ratios used are kept per character.
 - **Masks:** `clipDepth` masks use the union of the mask's fills, including sprite masks and static text glyphs, as a Canvas clip.
 - **Static text** (`DefineText`, `DefineText2`): glyph outlines from `DefineFont`/`DefineFont2`/`DefineFont3` are filled (even-odd) in their record's colour, which colour transforms modify. Each glyph is scaled by height / EM (1024, or 20480 for `DefineFont3`) and placed by the text matrix, the record offsets, and the advances. Font, height, colour, and position carry over between records.
 - **Text fields** (`DefineEditText`):
   - **Fonts:**
     - With `UseOutlines`, glyphs come from an embedded font with the face's name (same style first). Advances come from the font layout; kerning is not applied.
     - Otherwise, or when no embedded font has glyphs, a device font is drawn with Canvas `fillText`. `_sans`, `_serif`, and `_typewriter` map to the generic CSS families. Other names are tried as installed fonts, with a generic fallback (serif for Times New Roman, monospace for Courier-like names, sans-serif otherwise). No font is ever downloaded.
+    - A `DefineFont4` font is loaded into the page with the browser's `FontFace` API during `load`, under a family name of its own, and text fields whose face is its name draw with it like a device font. Without `FontFace`, or when the file cannot be loaded, a device font is used (`text:font4`). Static text cannot use its glyphs (`render:font4Text`). The fonts are removed from the page when the movie is released.
     - A field without a font uses Times New Roman at 12 px.
   - **Format:** the default format comes from the tag: size, colour (its alpha is ignored), alignment, margins, indent, and leading. Bold and italic come from the font, except in HTML fields.
   - **Layout:**
@@ -661,21 +675,19 @@ The bundle replaces each Flash `<object>`/`<embed>` with a canvas that plays its
 
 ### Not supported yet
 
-Each of these is reported in `getDiagnostics().unsupported` when it is met:
+The full list of limitations, grouped by subject, is in [`../LIMITATIONS.md`](../LIMITATIONS.md). Each of these is reported in `getDiagnostics().unsupported` when it is met:
 
 - ActionScript outside the subset above;
 - loads into levels other than `_level0`, `MovieClipLoader`, `LoadVars`, `XML` loading;
 - `javascript:` URLs that are not calls with literal arguments (`browser:javascriptUnsupported`); they are never evaluated;
-- characters that are placed but not drawn: morph shapes, video, `DefineFont4` text;
+- characters that are placed but not drawn: video;
+- static text (`DefineText`) with `DefineFont4` glyphs;
 - editing input fields (`text:input`), selection, scrolling, HTML images, kerning and letter spacing, style sheets, and text fields used as masks;
 - menu tracking (`trackAsMenu` buttons behave as push buttons), masks during hit testing, and buttons nested inside buttons;
 - Nellymoser and Speex sound, `StartSound2`, `Sound.id3`, and slowing or speeding up a timeline to follow its stream sound;
-- per-channel colour transforms on bitmaps (only the alpha multiplier is applied);
-- clipped bitmap fills beyond the bitmap's edges (Flash repeats the edge pixels there; the player leaves them empty);
-- gradient spread modes other than pad, and linear-RGB interpolation;
-- gradient and bitmap line fills (drawn with their first colour);
-- blend modes, filters, and non-scaling strokes;
-- 9-slice scaling.
+- linear-RGB gradient interpolation;
+- blend modes and filters;
+- 9-slice scaling in hit testing, masks and stroke widths, and non-scaling strokes in hit testing.
 
 Two parts are only checked by eye, through the demo:
 
@@ -685,4 +697,4 @@ Two parts are only checked by eye, through the demo:
 ## Next steps
 
 1. Grow the compatibility corpus (`tools/corpus.js`, see `tests/COMPATIBILITY.md`) with authorized SWF files, and fix what it finds.
-2. Morph shapes and filters.
+2. Filters and blend modes.

@@ -3,7 +3,7 @@
   'use strict';
 
   var M = global.RetroFlashModules;
-  var multiply = M.multiply, invert = M.invert, transformPoint = M.transformPoint, geometryOf = M.geometryOf;
+  var multiply = M.multiply, invert = M.invert, transformPoint = M.transformPoint, geometryOf = M.geometryOf, shapeOf = M.shapeOf;
 
   // Calls fn(x0, y0, x1, y1) for every segment of flat path commands; curves are split into 8 segments.
   // With `close`, each contour also gets its closing segment (as Canvas fill does).
@@ -64,12 +64,12 @@
   function hitTestObject(obj, world, x, y, report) {
     var c = obj.character, local;
     if (!c) return false;
-    if (c.type === 'shape' || c.type === 'bitmap' || c.type === 'text' || c.type === 'editText') {
+    if (c.type === 'shape' || c.type === 'morphShape' || c.type === 'bitmap' || c.type === 'text' || c.type === 'editText') {
       var inverse = invert(world);
       if (!inverse) return false;
       local = transformPoint(inverse, x, y);
     }
-    if (c.type === 'shape') return pointInShape(geometryOf(c, report), local[0], local[1]);
+    if (c.type === 'shape' || c.type === 'morphShape') return pointInShape(geometryOf(shapeOf(obj, report), report), local[0], local[1]);
     if (c.type === 'bitmap') return local[0] >= 0 && local[1] >= 0 && local[0] < c.width * 20 && local[1] < c.height * 20;
     if (c.type === 'text') return inRect(c.text.bounds, local);
     if (c.type === 'editText') {

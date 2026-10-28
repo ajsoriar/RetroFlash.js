@@ -176,7 +176,8 @@
         return global.SWFReader.load(bytes, self.maxFileBytes ? { maxFileBytes: self.maxFileBytes } : undefined).then(function (swf) {
           var movie = new M.Movie(swf);
           if (!self.decodeBitmaps) return { movie: movie };
-          return movie.decodeBitmaps(self.pixels, self.report).then(function () { return { movie: movie }; });
+          return movie.decodeBitmaps(self.pixels, self.report).then(function () { return movie.loadFonts(self.report); })
+            .then(function () { return { movie: movie }; });
         });
       }
       if (M.imageFormat(bytes)) return self.decodeImage(bytes, self.pixels, url).then(function (image) { return { image: image }; });

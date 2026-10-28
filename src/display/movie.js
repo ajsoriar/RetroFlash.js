@@ -10,7 +10,7 @@
   var BITMAP_CODES = { 6: 1, 20: 1, 21: 1, 35: 1, 36: 1, 90: 1 };
   var FONT_CODES = { 10: 1, 48: 1, 75: 1 };
   // Other definition tags whose body starts with the new character id (UI16); placed but not drawn yet.
-  var CHARACTER_TAGS = { 46: 1, 60: 1, 84: 1, 87: 1, 91: 1 };
+  var CHARACTER_TAGS = { 60: 1, 87: 1 };
 
   /* Frame k (1-based) = the control tags between ShowFrame k-1 and ShowFrame k. Tags after the last ShowFrame are
      ignored. A timeline with a stream sound also gets `stream`: { head (the first SoundStreamHead's fields),
@@ -59,7 +59,7 @@
   }
 
   function Movie(swf) {
-    var characters = Object.create(null), exports = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = Object.create(null), fontInfos = [];
+    var characters = Object.create(null), exports = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = Object.create(null), fontInfos = [], grids = [];
     // A definition whose body could not be decoded still defines its id (first UI16), so placements report
     // it as an invalid character rather than a missing one.
     function invalidCharacter(tag) {
@@ -74,6 +74,10 @@
       if (SHAPE_CODES[tag.code]) {
         if (decoded) characters[f.shapeId] = { type: 'shape', id: f.shapeId, name: tag.name, shape: f, geometry: null };
         else invalidCharacter(tag);
+      } else if (tag.code === 46 || tag.code === 84) {
+        // Morph shape: drawn at each placement's ratio (render/morph.js); `frames` caches those shapes.
+        if (decoded) characters[f.characterId] = { type: 'morphShape', id: f.characterId, name: tag.name, morph: f, frames: new Map() };
+        else invalidCharacter(tag);
       } else if (BITMAP_CODES[tag.code]) {
         if (decoded) characters[f.characterId] = { type: 'bitmap', id: f.characterId, name: tag.name, tag: tag, fields: f, source: null, width: 0, height: 0 };
         else invalidCharacter(tag);
@@ -83,6 +87,16 @@
       } else if (FONT_CODES[tag.code]) {
         if (decoded) characters[f.fontId] = fontCharacter(f, tag.name);
         else invalidCharacter(tag);
+      } else if (tag.code === 91) {
+        // DefineFont4: an OpenType font, loaded into the browser by loadFonts; `family` is its CSS name then.
+        if (decoded) {
+          characters[f.fontId] = {
+            type: 'font4', id: f.fontId, name: tag.name, fontName: f.name, bold: f.bold, italic: f.italic,
+            data: f.hasFontData ? swf.getTagData(tag).subarray(f.dataStart) : null, family: null, face: null
+          };
+        } else invalidCharacter(tag);
+      } else if (tag.code === 78) {
+        if (decoded) grids.push(f);
       } else if (tag.code === 13 || tag.code === 62) {
         if (f) fontInfos.push(f);
       } else if (tag.code === 11 || tag.code === 33) {
@@ -115,6 +129,11 @@
       var button = characters[id];
       if (!button || button.type !== 'button') return;
       buttonColors[id].forEach(function (cx, i) { if (button.records[i]) button.records[i].cx = toColorTransform(cx); });
+    });
+    // DefineScalingGrid gives a sprite or button its 9-slice grid.
+    grids.forEach(function (g) {
+      var c = characters[g.characterId];
+      if (c && (c.type === 'sprite' || c.type === 'button')) c.scalingGrid = g.splitter;
     });
     // DefineButtonSound gives a button the sounds of its state changes.
     Object.keys(buttonSounds).forEach(function (id) {
@@ -164,13 +183,45 @@
     for (var i = 0; i < BITMAP_DECODE_CONCURRENCY; i++) workers.push(worker());
     return Promise.all(workers);
   };
-  // Frees decoded bitmap memory when the movie is discarded. Returns the pixels its bitmaps had reserved.
+  /* Browser only. Loads the font files of DefineFont4 characters into the page (FontFace, document.fonts), each
+     under a family name of its own, so text fields that name the font draw with it. Without the FontFace API,
+     or when a file cannot be loaded, the text uses a device font and that is reported. */
+  var fontSerial = 0;
+  Movie.prototype.loadFonts = function (report) {
+    var characters = this.characters, fonts = global.document && global.document.fonts;
+    var list = Object.keys(characters).map(function (id) { return characters[id]; }).filter(function (c) { return c.type === 'font4' && c.data; });
+    if (!list.length) return Promise.resolve();
+    if (typeof global.FontFace !== 'function' || !fonts) {
+      report('text:font4', 'DefineFont4 fonts need the browser\'s FontFace API; text that names them uses a device font.', list.map(function (c) { return c.id; }).join(','));
+      return Promise.resolve();
+    }
+    return Promise.all(list.map(function (c) {
+      var family = 'RetroFlash Font4 ' + (++fontSerial), face;
+      try {
+        face = new global.FontFace(family, c.data, { weight: c.bold ? 'bold' : 'normal', style: c.italic ? 'italic' : 'normal' });
+      } catch (err) {
+        return report('text:font4', 'A DefineFont4 font could not be loaded; text that names it uses a device font.', c.id + ': ' + err.message);
+      }
+      return face.load().then(function () {
+        fonts.add(face);
+        c.family = family;
+        c.face = face;
+      }, function (err) {
+        report('text:font4', 'A DefineFont4 font could not be loaded; text that names it uses a device font.', c.id + ': ' + (err && err.message));
+      });
+    }));
+  };
+  // Frees decoded bitmap memory and loaded fonts when the movie is discarded. Returns the pixels its bitmaps had reserved.
   Movie.prototype.release = function () {
-    var characters = this.characters, pixels = 0;
+    var characters = this.characters, pixels = 0, fonts = global.document && global.document.fonts;
     Object.keys(characters).forEach(function (id) {
-      pixels += characters[id].reserved || 0;
-      characters[id].reserved = 0;
-      releaseSource(characters[id]);
+      var c = characters[id];
+      pixels += c.reserved || 0;
+      c.reserved = 0;
+      releaseSource(c);
+      if (c.type !== 'font4') return;
+      if (c.face && fonts) fonts.delete(c.face);
+      c.face = c.family = null;
     });
     return pixels;
   };
@@ -181,6 +232,7 @@
     if (typeof source.close === 'function') source.close();
     else { source.width = 0; source.height = 0; }
     holder.source = null;
+    holder.tints = null; // tinted copies made by the renderer
   }
 
   Object.assign(M, { buildTimeline: buildTimeline, Movie: Movie, releaseSource: releaseSource });

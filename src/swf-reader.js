@@ -500,6 +500,94 @@
     };
   }
 
+  /* Morph shapes (DefineMorphShape, DefineMorphShape2): two shapes the player interpolates by the placement's
+     ratio. Every style is a { start, end } pair in the DefineShape format (colours always RGBA). Focal gradients
+     are accepted in both tags. The start edges carry the style changes; the end edges, whose NumFillBits and
+     NumLineBits are not used, only edges and moves. */
+  function readMorphGradient(r, type) {
+    var startMatrix = r.readMatrix(), endMatrix = r.readMatrix();
+    r.align();
+    var head = { spreadMode: r.readUB(2, 'MORPHGRADIENT.SpreadMode'), interpolationMode: r.readUB(2, 'MORPHGRADIENT.InterpolationMode') };
+    var count = r.readUB(4, 'MORPHGRADIENT.NumGradients'), start = { stops: [] }, end = { stops: [] };
+    for (var i = 0; i < count; i++) {
+      start.stops.push({ ratio: r.readUI8('MORPHGRADRECORD.StartRatio'), color: r.readRGBA('MORPHGRADRECORD.StartColor') });
+      end.stops.push({ ratio: r.readUI8('MORPHGRADRECORD.EndRatio'), color: r.readRGBA('MORPHGRADRECORD.EndColor') });
+    }
+    var kind = type === 0x10 ? 'linear' : type === 0x12 ? 'radial' : 'focal';
+    var pair = {
+      start: { type: kind, matrix: startMatrix, gradient: Object.assign({}, head, start) },
+      end: { type: kind, matrix: endMatrix, gradient: Object.assign({}, head, end) }
+    };
+    if (type === 0x13) {
+      pair.start.gradient.focalPoint = r.readFixed8('MORPHFILLSTYLE.StartFocalPoint');
+      pair.end.gradient.focalPoint = r.readFixed8('MORPHFILLSTYLE.EndFocalPoint');
+    }
+    return pair;
+  }
+  function readMorphFillStyle(r) {
+    var at = r.byteOffset(), type = r.readUI8('MORPHFILLSTYLE.FillStyleType');
+    if (type === 0x00) return { start: { type: 'solid', color: r.readRGBA('MORPHFILLSTYLE.StartColor') }, end: { type: 'solid', color: r.readRGBA('MORPHFILLSTYLE.EndColor') } };
+    if (type === 0x10 || type === 0x12 || type === 0x13) return readMorphGradient(r, type);
+    if (type >= 0x40 && type <= 0x43) {
+      var id = r.readUI16('MORPHFILLSTYLE.BitmapId'), repeat = type === 0x40 || type === 0x42, smooth = type <= 0x41;
+      return {
+        start: { type: 'bitmap', bitmapId: id, matrix: r.readMatrix(), repeat: repeat, smooth: smooth },
+        end: { type: 'bitmap', bitmapId: id, matrix: r.readMatrix(), repeat: repeat, smooth: smooth }
+      };
+    }
+    fail('INVALID_VALUE', 'Unknown MORPHFILLSTYLE type 0x' + type.toString(16) + ' at byte ' + at, at);
+  }
+  function readMorphLineStyle(r, morphVersion) {
+    var startWidth = r.readUI16('MORPHLINESTYLE.StartWidth'), endWidth = r.readUI16('MORPHLINESTYLE.EndWidth');
+    if (morphVersion === 1) {
+      return { start: { width: startWidth, color: r.readRGBA('MORPHLINESTYLE.StartColor') }, end: { width: endWidth, color: r.readRGBA('MORPHLINESTYLE.EndColor') } };
+    }
+    var s = { startCap: r.readUB(2, 'MORPHLINESTYLE2.StartCapStyle'), join: r.readUB(2, 'MORPHLINESTYLE2.JoinStyle') };
+    var hasFill = r.readUB(1, 'MORPHLINESTYLE2.HasFillFlag');
+    s.noHScale = r.readUB(1, 'MORPHLINESTYLE2.NoHScaleFlag') === 1;
+    s.noVScale = r.readUB(1, 'MORPHLINESTYLE2.NoVScaleFlag') === 1;
+    s.pixelHinting = r.readUB(1, 'MORPHLINESTYLE2.PixelHintingFlag') === 1;
+    r.readUB(5, 'MORPHLINESTYLE2.Reserved');
+    s.noClose = r.readUB(1, 'MORPHLINESTYLE2.NoClose') === 1;
+    s.endCap = r.readUB(2, 'MORPHLINESTYLE2.EndCapStyle');
+    if (s.join === 2) s.miterLimit = r.readFixed8('MORPHLINESTYLE2.MiterLimitFactor');
+    var start = Object.assign({ width: startWidth }, s), end = Object.assign({ width: endWidth }, s);
+    if (hasFill) {
+      var fill = readMorphFillStyle(r);
+      start.fill = fill.start;
+      end.fill = fill.end;
+    } else {
+      start.color = r.readRGBA('MORPHLINESTYLE2.StartColor');
+      end.color = r.readRGBA('MORPHLINESTYLE2.EndColor');
+    }
+    return { start: start, end: end };
+  }
+  function morphShapeDecoder(morphVersion) {
+    var label = morphVersion === 2 ? 'DefineMorphShape2' : 'DefineMorphShape', shapeVersion = morphVersion === 2 ? 4 : 3;
+    return function (r) {
+      var f = { characterId: r.readUI16(label + '.CharacterId'), morphVersion: morphVersion, startBounds: r.readRect(), endBounds: r.readRect() };
+      if (morphVersion === 2) {
+        f.startEdgeBounds = r.readRect();
+        f.endEdgeBounds = r.readRect();
+        var flags = r.readUI8(label + '.Flags');
+        f.usesNonScalingStrokes = !!(flags & 0x02);
+        f.usesScalingStrokes = !!(flags & 0x01);
+      }
+      r.readUI32(label + '.Offset'); // the end edges follow the start edges
+      var i, count = readStyleCount(r, 2, 'MORPHFILLSTYLEARRAY.FillStyleCount');
+      f.fillStyles = [];
+      for (i = 0; i < count; i++) f.fillStyles.push(readMorphFillStyle(r));
+      count = readStyleCount(r, 2, 'MORPHLINESTYLEARRAY.LineStyleCount');
+      f.lineStyles = [];
+      for (i = 0; i < count; i++) f.lineStyles.push(readMorphLineStyle(r, morphVersion));
+      var fillBits = r.readUB(4, label + '.StartEdges.NumFillBits'), lineBits = r.readUB(4, label + '.StartEdges.NumLineBits');
+      f.startRecords = readShapeRecords(r, shapeVersion, fillBits, lineBits);
+      r.readUI8(label + '.EndEdges.NumBits');
+      f.endRecords = readShapeRecords(r, shapeVersion, 0, 0);
+      return f;
+    };
+  }
+
   /* Bitmaps. Only headers are decoded here; pixel data stays in the tag body. Offsets in `fields`
      (imageStart/imageEnd, alphaStart, dataStart) are relative to the tag body returned by getTagData(). */
   function sniffImage(bytes, at, end) {
@@ -793,6 +881,8 @@
     90: jpegDecoder('DefineBitsJPEG4'),
     20: losslessDecoder(1),
     36: losslessDecoder(2),
+    46: morphShapeDecoder(1),
+    84: morphShapeDecoder(2),
     4: function (r) {
       var f = { characterId: r.readUI16('PlaceObject.CharacterId'), depth: r.readUI16('PlaceObject.Depth'), matrix: r.readMatrix() };
       f.colorTransform = r.remainingBytes() > 0 ? r.readCxform() : null;
@@ -883,6 +973,19 @@
     88: function (r, ctx) {
       return { fontId: r.readUI16('DefineFontName.FontId'), name: r.readString(ctx.version, 'DefineFontName.FontName'), copyright: r.readString(ctx.version, 'DefineFontName.FontCopyright') };
     },
+    // DefineFont4: an OpenType (CFF) font for the text engine; its file starts at `dataStart` when present.
+    91: function (r, ctx) {
+      var start = r.start, f = { fontId: r.readUI16('DefineFont4.FontId') }, flags = r.readUI8('DefineFont4.Flags');
+      f.hasFontData = !!(flags & 0x04);
+      f.italic = !!(flags & 0x02);
+      f.bold = !!(flags & 0x01);
+      f.name = r.readString(ctx.version, 'DefineFont4.FontName');
+      f.dataStart = r.byteOffset() - start;
+      r.skipRemaining();
+      return f;
+    },
+    // DefineScalingGrid: the 9-slice grid of a sprite or button, in its own space (twips).
+    78: function (r) { return { characterId: r.readUI16('DefineScalingGrid.CharacterId'), splitter: r.readRect() }; },
     // DefineFontAlignZones and CSMTextSettings only tune anti-aliasing; their bodies are kept opaque.
     73: function (r) { var f = { fontId: r.readUI16('DefineFontAlignZones.FontId'), csmTableHint: r.readUI8('DefineFontAlignZones.CSMTableHint') >> 6 }; r.skipRemaining(); return f; },
     74: function (r) {

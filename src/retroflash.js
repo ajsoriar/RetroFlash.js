@@ -13,8 +13,8 @@
    evaluates JavaScript and never fetches or navigates by itself: what a movie asks of the page (getURL,
    javascript: URLs, FSCommand, ExternalInterface, loads) goes to the host page's `host` and `loader`
    options, after the cancelable events 'navigate', 'call' and 'fscommand'. RetroFlash.createBrowserHost()
-   gives a host that does it with the browser's own APIs; the legacy markup bootstrap uses it. Video and morph
-   shapes are not drawn yet; see getDiagnostics().unsupported.
+   gives a host that does it with the browser's own APIs; the legacy markup bootstrap uses it. Morph shapes
+   are drawn at their placement's ratio. Video is not drawn yet; see getDiagnostics().unsupported.
 */
 (function (global) {
   'use strict';
@@ -307,6 +307,7 @@
     try {
       movie = new Movie(swf);
       await movie.decodeBitmaps({ maxPixels: this.limits.maxBitmapPixels, remaining: this.limits.maxTotalBitmapPixels }, report);
+      await movie.loadFonts(report);
       if (superseded()) { movie.release(); return null; }
       this.movie = movie;
       this.movieOptions = movieOptions;

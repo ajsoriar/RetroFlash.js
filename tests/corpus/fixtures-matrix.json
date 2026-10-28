@@ -372,6 +372,52 @@
     }
   },
   {
+    "name": "fws-morph.swf",
+    "sha256": "d7c9902d0f80d1b2",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 8,
+    "avm": 1,
+    "width": 320,
+    "height": 200,
+    "fps": 12,
+    "frames": 11,
+    "tags": 38,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
     "name": "fws-nested-sprite.swf",
     "sha256": "5ad0a910d545bb4e",
     "status": "degraded",
@@ -411,6 +457,52 @@
     "tags": 5,
     "codeTags": {
       "avm1": 1,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-paint.swf",
+    "sha256": "75ee79747f453364",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 8,
+    "avm": 1,
+    "width": 480,
+    "height": 320,
+    "fps": 12,
+    "frames": 1,
+    "tags": 24,
+    "codeTags": {
+      "avm1": 0,
       "avm2": 0,
       "clipActions": 0,
       "buttonActions": 0

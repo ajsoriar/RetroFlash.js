@@ -15,7 +15,7 @@
      bullet }. The field's default format comes from DefineEditText. */
   function fieldFormat(field, characters, version) {
     var font = field.fontId !== undefined ? characters[field.fontId] : null, html = field.html;
-    if (font && font.type !== 'font') font = null;
+    if (font && font.type !== 'font' && font.type !== 'font4') font = null;
     function px(v) { return (v || 0) / 20; }
     return {
       face: field.fontClass || (font && font.fontName) || 'Times New Roman',
@@ -63,6 +63,19 @@
     return found || byName;
   }
 
+  // The CSS family of a loaded DefineFont4 for a format: same name and style first, then same name; or null.
+  function font4Family(characters, format) {
+    var name = format.face.toLowerCase(), byName = null, found = null;
+    Object.keys(characters).some(function (id) {
+      var c = characters[id];
+      if (c.type !== 'font4' || !c.family || c.fontName.toLowerCase() !== name) return false;
+      if (c.bold === !!format.bold && c.italic === !!format.italic) { found = c; return true; }
+      if (!byName) byName = c;
+      return false;
+    });
+    return (found || byName) ? (found || byName).family : null;
+  }
+
   /* Lays out a DefineEditText in its own space (twips). Text breaks at '\n' and, with WordWrap, between words
      (a word longer than the line is split between characters). Each line's height is its largest ascent and
      descent plus the leading; text starts 2 px (GUTTER) inside the bounds. Alignment uses the width between
@@ -98,8 +111,10 @@
           }
         };
       } else {
-        if (field.useOutlines) report('text:deviceFallback', 'A text field set to embedded fonts has no font with glyphs for its face; a device font is used.', id + ': ' + format.face);
-        var css = (format.italic ? 'italic ' : '') + (format.bold ? 'bold ' : '') + format.size + 'px ' + cssFontFamily(format.face);
+        // A DefineFont4 of that name, once loaded, is drawn like a device font.
+        var family = font4Family(characters, format);
+        if (field.useOutlines && !family) report('text:deviceFallback', 'A text field set to embedded fonts has no font with glyphs for its face; a device font is used.', id + ': ' + format.face);
+        var css = (format.italic ? 'italic ' : '') + (format.bold ? 'bold ' : '') + format.size + 'px ' + (family ? '"' + family + '", ' : '') + cssFontFamily(format.face);
         var mt = measure.metrics(css, format.size);
         face = { css: css, ascent: mt.ascent * 20, descent: mt.descent * 20, width: function (s) { return measure.width(css, s) * 20; } };
       }

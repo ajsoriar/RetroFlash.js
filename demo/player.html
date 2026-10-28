@@ -22,7 +22,7 @@ the root and <code>DefineSprite</code> timelines, <code>clipDepth</code> masks, 
 Static text uses the movie's embedded glyphs. Text fields use embedded or device fonts, with word wrap, alignment and an HTML subset.
 Frame scripts run through a controlled AVM1 subset, including expressions, control flow, functions, objects, clip events and common MovieClip APIs; unsupported features are reported below.
 Buttons respond to the mouse (hover, press, release) and to the keyboard once the canvas has focus.
-Morph shapes, video and text input are not supported yet; sound starts once you click or press a key on the page (browsers require it); what a movie uses is listed below.
+Video and text input are not supported yet; sound starts once you click or press a key on the page (browsers require it); what a movie uses is listed below.
 The player never fetches anything: when a script loads a movie, an image, variables or a sound (<code>loadMovie</code>, <code>loadVariables</code>, <code>Sound.loadSound</code>), the page answers with the file of the same name added below.
 Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code>, <code>fws-buttons.swf</code>, <code>fws-text.swf</code> or <code>fws-sound.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>
@@ -49,6 +49,7 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
 <script src="../src/core/base.js"></script>
 <script src="../src/core/math.js"></script>
 <script src="../src/render/geometry.js"></script>
+<script src="../src/render/morph.js"></script>
 <script src="../src/display/bitmaps.js"></script>
 <script src="../src/text/fonts.js"></script>
 <script src="../src/text/html.js"></script>

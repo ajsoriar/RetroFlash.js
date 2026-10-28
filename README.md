@@ -5,18 +5,21 @@ A lightweight, dependency-free Flash SWF player and ActionScript runtime, built 
 
 RetroFlash.js plays SWF animations on Canvas 2D:
 
-- `DefineShape` 1–4: solid fills, linear, radial and focal gradients, and lines;
+- `DefineShape` 1–4: solid fills, linear, radial and focal gradients (pad, reflect, repeat), and lines, including gradient and bitmap line fills and non-scaling strokes;
+- morph shapes (`DefineMorphShape`/`DefineMorphShape2`), drawn at each placement's ratio;
+- 9-slice scaling (`DefineScalingGrid`);
 - bitmaps:
   - `DefineBits` with `JPEGTables`;
   - `DefineBitsJPEG2/3/4` (JPEG, PNG, or GIF, and JPEG with an alpha plane);
   - `DefineBitsLossless/Lossless2`;
-  - bitmap fills, clipped or repeating;
+  - bitmap fills, clipped (with their edges extended) or repeating, and colour transforms on bitmaps;
 - the display list, built from `PlaceObject`/`RemoveObject`;
 - the timelines of the root movie and of nested `DefineSprite` instances;
 - `clipDepth` masks;
 - **text**:
   - `DefineText` drawn with the glyph outlines of `DefineFont`/`DefineFont2`/`DefineFont3`;
-  - `DefineEditText` fields with embedded or device fonts, word wrap, alignment, margins, borders, `AutoSize`, and an HTML subset;
+  - `DefineEditText` fields with embedded, device, or `DefineFont4` fonts, word wrap, alignment, margins, borders, `AutoSize`, and an HTML subset;
+- **sound**: event sounds, button sounds and stream sounds in PCM, ADPCM and MP3, through Web Audio;
 - **buttons** (`DefineButton`/`DefineButton2`): up/over/down states, hit areas, the hand cursor, and pointer and keyboard events with their actions;
 - a controlled **AVM1 subset** for frame scripts and button actions. Browser interactions go through explicit host APIs; SWF-provided text is never evaluated as JavaScript. It covers:
   - timeline control: `stop`, `play`, `nextFrame`/`prevFrame`, `gotoAndPlay`/`gotoAndStop` by frame or label, and `tellTarget`/`setTarget`;
@@ -26,17 +29,17 @@ RetroFlash.js plays SWF animations on Canvas 2D:
   - movie clips as values and their properties (`_x`, `_alpha`, `_visible`, `_currentframe`, …), `gotoAndPlay`/`gotoAndStop` with computed frames, `tellTarget` with computed targets, and `duplicateMovieClip`/`removeMovieClip`;
   - control flow: `if`/`else` and loops (bounded per frame), `return`, and `ifFrameLoaded`;
   - functions, closures, objects and arrays, classes (`new`, prototypes, `extends`, `super`), `with`, `try`/`catch`/`finally`, `for..in`, the built-in `Object`, `Array`, `String`, `Number`, `Boolean`, `Math` and `Error`, and the `MovieClip` methods (`_root.gotoAndPlay("label")`);
-  - game APIs: clip events (`onClipEvent`, `onEnterFrame`, `onPress`, …), `Key` and `Mouse` with listeners, timers (`setInterval`, `getTimer`), dragging, `hitTest`, `attachMovie`, `createEmptyMovieClip`, `swapDepths`, `Color`, `Stage`, a silent `Sound`, and `DoInitAction`;
-  - `loadMovie`, `unloadMovie`, and `loadVariables` into clips: other SWF files and JPEG, PNG, or GIF images. The host page gives them through the `loader` option (see [`src/README.md`](./src/README.md#loading-into-clips)); legacy `<object>`/`<embed>` markup in the bundle gets a same-origin loader automatically.
+  - game APIs: clip events (`onClipEvent`, `onEnterFrame`, `onPress`, …), `Key` and `Mouse` with listeners, timers (`setInterval`, `getTimer`), dragging, `hitTest`, `attachMovie`, `createEmptyMovieClip`, `swapDepths`, `Color`, `Stage`, `Sound` (library sounds and `loadSound`), and `DoInitAction`;
+  - `loadMovie`, `unloadMovie`, and `loadVariables` into clips: other SWF files and JPEG, PNG, or GIF images. The host page gives them through the `loader` option (see [`src/README.md`](./src/README.md#loading-into-clips)); legacy `<object>`/`<embed>` markup in the bundle gets a browser loader automatically, under CORS.
 
-The `tests/fixtures/valid/fws-game.swf` mini game (a hero moved with the arrow keys, a score) plays in the player. Input fields cannot be edited. Sound and morph shapes are not drawn. All of these are listed in `getDiagnostics().unsupported`.
+The `tests/fixtures/valid/fws-game.swf` mini game (a hero moved with the arrow keys, a score) plays in the player. What is not supported yet, such as editable input fields, filters, blend modes, video, and ActionScript 3, is listed in [`LIMITATIONS.md`](./LIMITATIONS.md) and reported at run time in `getDiagnostics().unsupported`.
 
 The code lives in [`src/`](./src/) as classic scripts with no dependencies:
 
 | File | Role |
 |---|---|
 | `src/swf-reader.js` | Parser (`SWFReader`, v0.6): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, filter lists, clip actions, and exports, and `inflate` |
-| `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/input/`, `src/render/`, `src/browser/` | Player modules, including automatic same-origin playback of legacy Flash markup |
+| `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/audio/`, `src/input/`, `src/render/`, `src/browser/` | Player modules, including automatic playback of legacy Flash markup |
 | `src/retroflash.js` | Player API (`RetroFlash`, v0.4) |
 | `src/modules.json` | The load order of every script above |
 
@@ -60,7 +63,7 @@ During development, the source scripts can be loaded directly instead, in the or
 - [`demo/player.html`](./demo/player.html): the player;
 - [`demo/index.html`](./demo/index.html): the structure inspector.
 
-The API is documented in [`src/README.md`](./src/README.md).
+The API is documented in [`src/README.md`](./src/README.md), and its limitations in [`LIMITATIONS.md`](./LIMITATIONS.md).
 
 ## Tests
 

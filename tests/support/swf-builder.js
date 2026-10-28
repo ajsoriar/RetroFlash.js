@@ -116,9 +116,10 @@ function lineStyle(w, l, version) {
   w.u16(l.width);
   if (version < 4) return shapeColor(w, l.color, version);
   const cap = l.cap || 0, join = l.join || 0;
-  w.ub(2, cap).ub(2, join).ub(1, 0).ub(1, 0).ub(1, 0).ub(1, 0).ub(5, 0).ub(1, 0).ub(2, cap);
+  w.ub(2, cap).ub(2, join).ub(1, l.fill ? 1 : 0).ub(1, l.noHScale ? 1 : 0).ub(1, l.noVScale ? 1 : 0).ub(1, 0).ub(5, 0).ub(1, 0).ub(2, cap);
   if (join === 2) w.u16(Math.round((l.miterLimit || 3) * 256));
-  shapeColor(w, l.color, 4);
+  if (l.fill) fillStyle(w, l.fill, 4); // LINESTYLE2 HasFill: a fill style instead of a colour
+  else shapeColor(w, l.color, 4);
 }
 
 function styleArrays(w, fills, lines, version) {
@@ -179,6 +180,61 @@ function defineShape(id, shape) {
     shapeRecords(w, shape.records, bits);
   }));
 }
+
+/* DefineMorphShape (version 1) and DefineMorphShape2 (version 2). Records use defineShape's absolute form; the
+   end records hold only edges and moves. Colours are RGBA.
+   morph = { version, startBounds, endBounds, fills: [{ start, end }], lines: [{ start, end }], startRecords, endRecords }
+   fill:  { color } | { linear|radial|focal: { matrix, stops: [[ratio, color]], focalPoint? } } | { bitmap: { id, matrix } }
+          (start and end of one fill share its kind; gradients the same number of stops)
+   line:  { width, color } (version 2 also takes cap and join from the start) */
+function morphFill(w, a, b) {
+  const rgba = (c) => w.u8(c[0]).u8(c[1]).u8(c[2]).u8(c[3] === undefined ? 255 : c[3]);
+  if (a.color) { w.u8(0x00); rgba(a.color); rgba(b.color); return; }
+  if (a.bitmap) { w.u8(0x41).u16(a.bitmap.id); matrix(w, a.bitmap.matrix || {}); matrix(w, b.bitmap.matrix || {}); return; }
+  const kind = a.linear ? 'linear' : a.radial ? 'radial' : 'focal', ga = a[kind], gb = b[kind];
+  w.u8({ linear: 0x10, radial: 0x12, focal: 0x13 }[kind]);
+  matrix(w, ga.matrix);
+  matrix(w, gb.matrix);
+  w.align().ub(2, ga.spread || 0).ub(2, 0).ub(4, ga.stops.length);
+  ga.stops.forEach(([ratio, c], i) => { w.u8(ratio); rgba(c); w.u8(gb.stops[i][0]); rgba(gb.stops[i][1]); });
+  if (kind === 'focal') w.u16(Math.round(ga.focalPoint * 256) & 0xffff).u16(Math.round(gb.focalPoint * 256) & 0xffff);
+}
+function defineMorphShape(id, m) {
+  const version = m.version || 1;
+  const rest = body((w) => {
+    w.u8(m.fills.length);
+    for (const p of m.fills) morphFill(w, p.start, p.end);
+    w.u8(m.lines.length);
+    for (const { start, end } of m.lines) {
+      w.u16(start.width).u16(end.width);
+      if (version === 2) {
+        const cap = start.cap || 0, join = start.join || 0;
+        w.ub(2, cap).ub(2, join).ub(1, 0).ub(1, 0).ub(1, 0).ub(1, 0).ub(5, 0).ub(1, 0).ub(2, cap);
+        if (join === 2) w.u16(Math.round((start.miterLimit || 3) * 256));
+      }
+      for (const c of [start.color, end.color]) w.u8(c[0]).u8(c[1]).u8(c[2]).u8(c[3] === undefined ? 255 : c[3]);
+    }
+    const bits = { fill: unsignedBits(m.fills.length), line: unsignedBits(m.lines.length) };
+    w.ub(4, bits.fill).ub(4, bits.line);
+    shapeRecords(w, m.startRecords, bits);
+  });
+  const endEdges = body((w) => { w.u8(0); shapeRecords(w, m.endRecords, { fill: 0, line: 0 }); });
+  return tag(version === 2 ? 84 : 46, body((w) => {
+    w.u16(id);
+    rect(w, m.startBounds);
+    rect(w, m.endBounds);
+    if (version === 2) { rect(w, m.startEdgeBounds || m.startBounds); rect(w, m.endEdgeBounds || m.endBounds); w.u8(m.flags || 0x01); }
+    w.u32(rest.length).raw(rest).raw(endEdges);
+  }));
+}
+
+// DefineScalingGrid: the 9-slice grid { xMin, xMax, yMin, yMax } (twips) of sprite or button `id`.
+const defineScalingGrid = (id, grid) => tag(78, body((w) => { w.u16(id); rect(w, grid); }));
+// DefineFont4: { name, bold, italic, data } (data: the font file, optional).
+const defineFont4 = (id, f) => tag(91, body((w) => {
+  w.u16(id).u8((f.data ? 0x04 : 0) | (f.italic ? 0x02 : 0) | (f.bold ? 0x01 : 0)).string(f.name);
+  if (f.data) w.raw(f.data);
+}));
 
 // RECORDHEADER + body. `long` forces the 6-byte form; `length` overrides the declared length.
 function tag(code, data = new Uint8Array(0), { long = false, length } = {}) {
@@ -527,5 +583,5 @@ module.exports = {
   BitWriter, signedBits, rect, matrix, cxform, body, tag, defineShape, T, swf, movieBody, STAGE_550x400,
   splitJpeg, png, crc32, defineBitsLossless, defineBitsJPEG2, defineBitsJPEG3, defineBits, jpegTables, A, doAction,
   defineButton2, defineButton, defineButtonCxform, glyphShape, defineFont2, defineText, defineEditText,
-  soundInfo, defineSound, startSound, defineButtonSound, soundStreamHead, soundStreamBlock, pcm16, adpcm, mp3Silence
+  defineMorphShape, defineScalingGrid, defineFont4, soundInfo, defineSound, startSound, defineButtonSound, soundStreamHead, soundStreamBlock, pcm16, adpcm, mp3Silence
 };

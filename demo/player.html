@@ -19,7 +19,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;b
 <p>Plays the vector part of a SWF on Canvas 2D: <code>DefineShape</code> 1–4 (solid fills, linear/radial gradients, lines), the display list,
 the root and <code>DefineSprite</code> timelines, <code>clipDepth</code> masks, and bitmaps: JPEG, PNG, GIF, JPEG with alpha, and lossless.
 Static text uses the movie's embedded glyphs. Text fields use embedded or device fonts, with word wrap, alignment and an HTML subset.
-Frame scripts run through a controlled AVM1 subset (stop, play, goto, setTarget); AS2 control flow and calls are not followed yet.
+Frame scripts run through a controlled AVM1 subset, including expressions, control flow, functions, objects, clip events and common MovieClip APIs; unsupported features are reported below.
 Buttons respond to the mouse (hover, press, release) and to the keyboard once the canvas has focus.
 Sound, morph shapes and text input are not supported yet; what a movie uses is listed below.
 Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code>, <code>fws-buttons.swf</code> or <code>fws-text.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
@@ -45,6 +45,11 @@ Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</
 <script src="../src/text/html.js"></script>
 <script src="../src/text/layout.js"></script>
 <script src="../src/avm1/decoder.js"></script>
+<script src="../src/avm1/values.js"></script>
+<script src="../src/avm1/properties.js"></script>
+<script src="../src/avm1/objects.js"></script>
+<script src="../src/avm1/variables.js"></script>
+<script src="../src/avm1/globals.js"></script>
 <script src="../src/avm1/interpreter.js"></script>
 <script src="../src/display/movie.js"></script>
 <script src="../src/display/clip.js"></script>

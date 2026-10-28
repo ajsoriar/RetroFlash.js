@@ -4,22 +4,35 @@
 
   var M = global.RetroFlashModules;
   var resolveLimits = M.resolveLimits, IDENTITY = M.IDENTITY, toMatrix = M.toMatrix, CX_IDENTITY = M.CX_IDENTITY,
-    toColorTransform = M.toColorTransform, ActionScheduler = M.ActionScheduler;
+    toColorTransform = M.toColorTransform, ActionScheduler = M.ActionScheduler, bindTextField = M.bindTextField;
 
   /* A Clip is a running timeline (the root or a sprite instance) with its display list keyed by depth.
      `env` is the movie's display context (createEnv). Display objects are { depth, characterId, character,
-     matrix, cx, ratio, name, clipDepth, blendMode, clip }. `playing` is the timeline's own play state (AVM1
-     stop/play). */
+     matrix, cx, ratio, name, clipDepth, blendMode, clip }, plus `binding` for text fields bound to a variable,
+     and, once a script changed them, `visible`, `transform` (avm1/properties.js), `scriptTransformed` (the
+     timeline no longer moves it) and `dynamic` (created by a script at depth + SCRIPT_DEPTH; the timeline never
+     removes it). `playing` is the timeline's own play state (AVM1 stop/play); `variables` holds its AVM1
+     variables (avm1/variables.js). A Clip is also an AVM1 value (avm1Type 'movieclip'). */
   function Clip(env, def, level, parent) {
     this.env = env;
     this.def = def;
     this.level = level;
     this.parent = parent || null;
+    this.object = null; // its display object in the parent's list (see displayObject)
     this.frame = 0;
     this.loop = true;
     this.playing = true;
     this.displayList = new Map();
+    this.variables = new Map();
+    if (!this.parent && env.scripts) env.scripts.root = this; // the movie's root, for paths outside scripts
   }
+  Clip.prototype.avm1Type = 'movieclip';
+  // Script depths (duplicateMovieClip) are offset from timeline depths, as in Flash Player.
+  var SCRIPT_DEPTH = 16384;
+  // The display object that places this clip; the root gets one of its own (its _x, _alpha, ... apply to the movie).
+  Clip.prototype.displayObject = function () {
+    return this.object || (this.object = { depth: 0, characterId: 0, character: null, matrix: IDENTITY, cx: CX_IDENTITY, name: '', clip: this });
+  };
   /* The display context shared by every Clip of one movie: the dictionary, report(feature, reason, source),
      the limits (resolveLimits), `instances` (sprite and button instances created in the current step; the
      player resets it at each tick, seek and input event), and `scripts`, the movie's ActionScheduler.
@@ -28,8 +41,8 @@
     options = options || {};
     var limits = options.limits || resolveLimits();
     return {
-      characters: movie.characters, swf: movie.swf, version: movie.swf.version, report: report, limits: limits,
-      instances: 0, scripts: new ActionScheduler(movie.swf, report, limits, options.actions)
+      characters: movie.characters, exports: movie.exports || Object.create(null), swf: movie.swf, version: movie.swf.version, report: report, limits: limits,
+      instances: 0, instanceNames: 0, input: null, initActions: new Set(), scripts: new ActionScheduler(movie.swf, report, limits, options.actions)
     };
   }
   // Character ids of the sprites containing this clip (the root is 0).
@@ -59,11 +72,12 @@
       env.report('render:instanceLimit', 'More than ' + limits.maxInstances + ' sprite and button instances in one step; further ones are not created.', characterId);
     } else if (character.type === 'sprite') {
       obj.clip = new Clip(env, character, level + 1, this);
+      obj.clip.object = obj;
       obj.clip.gotoFrame(1);
     } else if (character.type === 'button') {
       obj.button = new M.ButtonInstance(this, character, level + 1, ancestry.concat(characterId));
     } else if (character.type === 'editText') {
-      if (character.field.variableName) env.report('text:variable', 'Text fields bound to a variable show their initial text; ActionScript variables are not implemented yet.', characterId);
+      if (character.field.variableName) bindTextField(this, obj);
       if (!character.field.readOnly) env.report('text:input', 'Input text fields are drawn but cannot be edited yet.', characterId);
     } else if (character.type === 'font') {
       env.report('render:fontPlaced', 'A font is not a display object; the placement draws nothing.', characterId);
@@ -72,12 +86,50 @@
     }
     return obj;
   };
-  // Applies one control tag to `list` (a Map depth -> object); `make(characterId)` creates new objects.
-  function applyControlTag(list, tag, make, report) {
-    var f = tag.fields;
+  // A sprite instance placed without a name is named "instanceN", N counting from 1 in the movie, as in Flash Player.
+  function nameInstance(env, obj) {
+    if (obj.clip && obj.name === undefined) obj.name = 'instance' + (++env.instanceNames);
+  }
+  /* A display object just put on the stage: a new sprite instance is named, and gets its initialize and load
+     events (after its own frame-1 script, which was queued when it was made). */
+  function placed(env, obj) {
+    nameInstance(env, obj);
+    if (obj.clip && env.scripts) {
+      env.scripts.clipEvent(obj.clip, 'initialize');
+      env.scripts.clipEvent(obj.clip, 'load');
+    }
+  }
+  /* A display object leaving the stage: a sprite instance and the instances inside it are marked removed and
+     get their unload events. */
+  function retire(env, obj) {
+    if (!obj || !obj.clip || !env.scripts) return;
+    (function unload(clip) {
+      clip.displayList.forEach(function (child) { if (child.clip) unload(child.clip); });
+      clip.removed = true;
+      env.scripts.clipEvent(clip, 'unload');
+    })(obj.clip);
+  }
+  /* The clip event actions of a placement (onClipEvent), as runnable blocks: [{ events, keyCode, block }],
+     made once per tag. */
+  function clipActionsOf(env, tag) {
+    if (!tag.clipActionBlocks) {
+      var data = env.swf.getTagData(tag);
+      tag.clipActionBlocks = tag.fields.clipActions.map(function (a) {
+        return {
+          events: a.events, keyCode: a.keyCode,
+          block: { bytes: data.subarray(a.start, a.end), offset: tag.dataOffset + a.start, label: 'onClipEvent(' + a.events.join(', ') + ')' }
+        };
+      });
+    }
+    return tag.clipActionBlocks;
+  }
+  /* Applies one control tag to `list` (a Map depth -> object); `make(characterId)` creates new objects. An
+     object a script transformed keeps its matrix and colour transform. */
+  function applyControlTag(list, tag, make, env) {
+    var f = tag.fields, report = env.report;
     if (!f) return;
     var code = tag.code;
-    if (code === 5 || code === 28) { list.delete(f.depth); return; }
+    if (code === 5 || code === 28) { retire(env, list.get(f.depth)); list.delete(f.depth); return; }
     if (code !== 4 && code !== 26 && code !== 70) return;
     var existing = list.get(f.depth), hasCharacter = f.characterId !== undefined, obj;
     if (code === 4) {
@@ -98,57 +150,77 @@
     } else {
       return report('timeline:placeWithoutCharacter', 'PlaceObject2/3 without Move or CharacterId; ignored.', f.depth);
     }
+    if (existing && obj !== existing) retire(env, existing);
     obj.depth = f.depth;
-    if (f.matrix) obj.matrix = toMatrix(f.matrix);
-    if (f.colorTransform) obj.cx = toColorTransform(f.colorTransform);
+    var keep = obj === existing && obj.scriptTransformed;
+    if (f.matrix && !keep) { obj.matrix = toMatrix(f.matrix); obj.transform = null; }
+    if (f.colorTransform && !keep) obj.cx = toColorTransform(f.colorTransform);
     if (f.ratio !== undefined) obj.ratio = f.ratio;
     if (f.name !== undefined) obj.name = f.name;
     if (f.clipDepth !== undefined) obj.clipDepth = f.clipDepth;
     if (f.blendMode !== undefined) obj.blendMode = f.blendMode;
+    if (f.clipActions && f.clipActions.length && env.swf) obj.clipActions = clipActionsOf(env, tag);
     list.set(f.depth, obj);
+    if (obj !== existing) placed(env, obj);
   }
   Clip.prototype.frameCount = function () { return this.def.frames.length; };
   Clip.prototype.gotoFrame = function (n) {
-    var count = this.def.frames.length, self = this, report = this.env.report;
+    var count = this.def.frames.length, self = this, env = this.env;
     n = Math.max(1, Math.min(count, Math.floor(n)));
     if (n === this.frame) return;
     var make = function (id) { return self.createObject(id); };
     if (n > this.frame) {
       for (var k = this.frame + 1; k <= n; k++) {
-        this.def.frames[k - 1].forEach(function (tag) { applyControlTag(self.displayList, tag, make, report); });
+        this.def.frames[k - 1].forEach(function (tag) { applyControlTag(self.displayList, tag, make, env); });
       }
     } else {
       // Rewind: rebuild the target state from frame 1, then keep existing objects whose depth still holds
-      // the same character (sprite instances keep running), replace or remove the rest.
+      // the same character (sprite instances keep running), replace or remove the rest. Objects created by
+      // scripts stay; objects a script transformed keep their matrix and colour transform.
       var plan = new Map(), plain = function (id) { return { characterId: id, matrix: IDENTITY, cx: CX_IDENTITY }; };
+      var planEnv = { report: env.report, instanceNames: 0, swf: env.swf };
       for (var j = 1; j <= n; j++) {
-        this.def.frames[j - 1].forEach(function (tag) { applyControlTag(plan, tag, plain, report); });
+        this.def.frames[j - 1].forEach(function (tag) { applyControlTag(plan, tag, plain, planEnv); });
       }
       this.displayList.forEach(function (obj, depth) {
         var target = plan.get(depth);
-        if (!target || target.characterId !== obj.characterId) self.displayList.delete(depth);
+        if (!obj.dynamic && (!target || target.characterId !== obj.characterId)) { retire(env, obj); self.displayList.delete(depth); }
       });
       plan.forEach(function (target, depth) {
-        var obj = self.displayList.get(depth) || self.createObject(target.characterId);
-        ['depth', 'matrix', 'cx', 'ratio', 'name', 'clipDepth', 'blendMode'].forEach(function (k) { obj[k] = target[k]; });
+        var existing = self.displayList.get(depth), obj = existing || self.createObject(target.characterId);
+        ['depth', 'ratio', 'clipDepth', 'blendMode'].forEach(function (k) { obj[k] = target[k]; });
+        if (!(existing && existing.scriptTransformed)) { obj.matrix = target.matrix; obj.cx = target.cx; obj.transform = null; }
+        if (target.name !== undefined) obj.name = target.name;
+        if (target.clipActions) obj.clipActions = target.clipActions;
         self.displayList.set(depth, obj);
+        if (!existing) placed(env, obj);
       });
     }
     this.frame = n;
     this.queueFrameActions(n);
   };
-  // Frame scripts (DoAction) of the frame just entered run after the current tick, in queue order.
+  /* The scripts of the frame just entered run after the current tick, in queue order: first the DoInitAction
+     scripts met for the first time in the movie (run on the root timeline, once), then the DoAction scripts. */
   Clip.prototype.queueFrameActions = function (n) {
-    this.env.scripts.enqueue(this, this.def.frames[n - 1].filter(function (tag) { return tag.code === 12; }));
+    var env = this.env, init = [], root = this.root();
+    this.def.frames[n - 1].forEach(function (tag) {
+      if (tag.code !== 59 || env.initActions.has(tag) || tag.length < 2) return;
+      env.initActions.add(tag);
+      if (!tag.initBlock) tag.initBlock = { bytes: env.swf.getTagData(tag).subarray(2), offset: tag.dataOffset + 2, label: 'DoInitAction' };
+      init.push(tag.initBlock);
+    });
+    if (init.length) env.scripts.enqueue(root, init);
+    env.scripts.enqueue(this, this.def.frames[n - 1].filter(function (tag) { return tag.code === 12; }));
   };
-  // One tick: existing child sprites advance first; then this timeline moves to its next frame (children it
-  // places now start at their frame 1). A stopped timeline stays put but its children keep playing.
-  // Returns true when the last frame was passed (looped or stopped there).
+  /* One tick: existing child sprites tick first; then this clip gets its enterFrame event and its timeline
+     moves to its next frame (children it places now start at their frame 1), as in Flash Player. A stopped
+     timeline stays put but its children keep playing. Returns true when the last frame was passed. */
   Clip.prototype.tick = function () {
     this.displayList.forEach(function (obj) {
       if (obj.clip) obj.clip.tick();
       else if (obj.button) obj.button.tick();
     });
+    this.env.scripts.clipEvent(this, 'enterFrame');
     var count = this.def.frames.length;
     if (!this.playing || count < 2) return false;
     if (this.frame < count) { this.gotoFrame(this.frame + 1); return false; }
@@ -172,6 +244,59 @@
     });
     return found;
   };
+  // Puts a display object made by a script at script depth `depth` (0 or more), replacing what was there.
+  Clip.prototype.placeScripted = function (obj, name, depth) {
+    obj.depth = depth + SCRIPT_DEPTH;
+    obj.name = name;
+    obj.dynamic = true;
+    retire(this.env, this.displayList.get(obj.depth));
+    this.displayList.set(obj.depth, obj);
+    placed(this.env, obj);
+    return obj.clip;
+  };
+  /* duplicateMovieClip (CloneSprite): a new instance of `source`'s sprite, named `name`, at script depth `depth`
+     of this clip, with source's matrix, colour transform and clip events. It starts at its frame 1. Returns
+     the new Clip, or null. */
+  Clip.prototype.cloneChild = function (source, name, depth) {
+    var obj = this.createObject(source.characterId);
+    if (!obj.clip) return null;
+    obj.matrix = source.matrix;
+    obj.cx = source.cx;
+    if (source.clipActions) obj.clipActions = source.clipActions;
+    return this.placeScripted(obj, name, depth);
+  };
+  // attachMovie: a new instance of a sprite character (found by its ExportAssets name) at script depth `depth`.
+  Clip.prototype.attachChild = function (characterId, name, depth) {
+    var obj = this.createObject(characterId);
+    return obj.clip ? this.placeScripted(obj, name, depth) : null;
+  };
+  // createEmptyMovieClip: an empty sprite instance with one frame at script depth `depth`.
+  Clip.prototype.createEmptyChild = function (name, depth) {
+    var def = { type: 'sprite', id: 0, name: 'empty', frames: [[]], labels: Object.create(null) };
+    var obj = { characterId: 0, character: def, matrix: IDENTITY, cx: CX_IDENTITY, clip: null };
+    obj.clip = new Clip(this.env, def, this.level + 1, this);
+    obj.clip.object = obj;
+    obj.clip.gotoFrame(1);
+    return this.placeScripted(obj, name, depth);
+  };
+  /* swapDepths: moves `obj` to `depth` (an internal depth), swapping with what is there. Both objects are then
+     managed by scripts: the timeline no longer removes them. */
+  Clip.prototype.swapDepths = function (obj, depth) {
+    if (this.displayList.get(obj.depth) !== obj || obj.depth === depth) return;
+    var other = this.displayList.get(depth), from = obj.depth;
+    this.displayList.delete(from);
+    if (other) { other.depth = from; other.dynamic = true; this.displayList.set(from, other); }
+    obj.depth = depth;
+    obj.dynamic = true;
+    this.displayList.set(depth, obj);
+  };
+  // removeMovieClip (RemoveSprite): only instances created or moved by a script can be removed. True when removed.
+  Clip.prototype.removeChild = function (obj) {
+    if (!obj.dynamic || this.displayList.get(obj.depth) !== obj) return false;
+    this.displayList.delete(obj.depth);
+    retire(this.env, obj);
+    return true;
+  };
   Clip.prototype.findLabel = function (label) {
     var labels = this.def.labels;
     if (label in labels) return labels[label];
@@ -180,5 +305,5 @@
     return 0;
   };
 
-  Object.assign(M, { Clip: Clip, createEnv: createEnv });
+  Object.assign(M, { Clip: Clip, createEnv: createEnv, SCRIPT_DEPTH: SCRIPT_DEPTH });
 })(typeof window !== 'undefined' ? window : globalThis);

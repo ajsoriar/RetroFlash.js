@@ -1,9 +1,9 @@
 'use strict';
 // Project-authored AVM1 timeline-control fixture (SWF 6, 200x200, 12 fps).
 //   sprite 10 "spinner": 10 frames, a square rotating; frame 5 runs stop()
-//   sprite 11: 2 frames; frame 1 runs play(), an unsupported Jump, then stop() (not reached by the subset)
+//   sprite 11: 2 frames; frame 1 runs play(), a Jump with offset 0 (to the next record), then stop()
 //   root: f1 places both sprites · f3 label "three": gotoLabel("five"), play() · f4 stop() (skipped over)
-//         f5 label "five": setTarget("spinner"), gotoFrame(7), setTarget(""), x = "1" (unsupported),
+//         f5 label "five": setTarget("spinner"), gotoFrame(7), setTarget(""), x = "1" (a root variable),
 //            getURL (ignored, never navigates), stop() · f6 stop()
 const B = require('../support/swf-builder');
 const { A } = B;

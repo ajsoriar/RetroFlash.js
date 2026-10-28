@@ -1,0 +1,1259 @@
+[
+  {
+    "name": "cws-minimal.swf",
+    "sha256": "2c85f550bcc29657",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 4,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-actions.swf",
+    "sha256": "96d7925b7b49da6f",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "degraded",
+        "features": {
+          "avm1:GetURL": 1
+        }
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 6,
+    "avm": 1,
+    "width": 200,
+    "height": 200,
+    "fps": 12,
+    "frames": 6,
+    "tags": 19,
+    "codeTags": {
+      "avm1": 6,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 13,
+      "cachedBlocks": 3,
+      "decodedBytes": 92
+    }
+  },
+  {
+    "name": "fws-animation.swf",
+    "sha256": "fb6fb99684baf7a3",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 8,
+    "avm": 1,
+    "width": 480,
+    "height": 320,
+    "fps": 24,
+    "frames": 48,
+    "tags": 164,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-bitmaps.swf",
+    "sha256": "91f3f2562b704f0a",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 8,
+    "avm": 1,
+    "width": 480,
+    "height": 320,
+    "fps": 12,
+    "frames": 1,
+    "tags": 35,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-buttons.swf",
+    "sha256": "182ac304d79735c5",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 6,
+    "avm": 1,
+    "width": 320,
+    "height": 200,
+    "fps": 12,
+    "frames": 2,
+    "tags": 23,
+    "codeTags": {
+      "avm1": 4,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 4
+    },
+    "actions": {
+      "steps": 8,
+      "cachedBlocks": 6,
+      "decodedBytes": 53
+    }
+  },
+  {
+    "name": "fws-game.swf",
+    "sha256": "502efccd685545ff",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 6,
+    "avm": 1,
+    "width": 400,
+    "height": 200,
+    "fps": 12,
+    "frames": 1,
+    "tags": 12,
+    "codeTags": {
+      "avm1": 1,
+      "avm2": 0,
+      "clipActions": 1,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 1808,
+      "cachedBlocks": 2,
+      "decodedBytes": 219
+    }
+  },
+  {
+    "name": "fws-minimal.swf",
+    "sha256": "670a2664871222b6",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 4,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-nested-sprite.swf",
+    "sha256": "5ad0a910d545bb4e",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "TAG_NOT_ALLOWED_IN_SPRITE": 2,
+          "SPRITE_MISSING_END": 1,
+          "SPRITE_FRAME_COUNT_MISMATCH": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 5,
+    "codeTags": {
+      "avm1": 1,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-text.swf",
+    "sha256": "d7c3c3599fe456ba",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "degraded",
+        "features": {
+          "text:input": 1
+        }
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 400,
+    "height": 300,
+    "fps": 12,
+    "frames": 1,
+    "tags": 22,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-timeline.swf",
+    "sha256": "32234e303455a8b8",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 12.5,
+    "frames": 2,
+    "tags": 16,
+    "codeTags": {
+      "avm1": 1,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 1,
+      "cachedBlocks": 1,
+      "decodedBytes": 5
+    }
+  },
+  {
+    "name": "fws-unsupported.swf",
+    "sha256": "9d8ed88e974490b2",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "tag:Unknown_1000": 1,
+          "actionscript:DoABC": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "degraded",
+        "features": {
+          "render:missingCharacter": 2,
+          "render:blendMode": 7
+        }
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 7,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 1,
+      "clipActions": 1,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-bytes-after-end.swf",
+    "sha256": "87c0353a3f762001",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "TRAILING_BYTES_AFTER_END": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 3,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-extra-file-bytes.swf",
+    "sha256": "04705768545140dc",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "TRAILING_FILE_BYTES": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 4,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-frame-count-mismatch.swf",
+    "sha256": "45c286b71cc51125",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "FRAME_COUNT_MISMATCH": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 3,
+    "tags": 4,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-invalid-bodies.swf",
+    "sha256": "e21b114d8e60e1f1",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "TRUNCATED_DATA": 3,
+          "TAG_EXTRA_BYTES": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 6,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-missing-end.swf",
+    "sha256": "af62bde428581d65",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "MISSING_END": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 2,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "fws-sprite-overflow.swf",
+    "sha256": "f272d40d509432ca",
+    "status": "degraded",
+    "layers": {
+      "parser": {
+        "status": "degraded",
+        "features": {
+          "TAG_OUT_OF_BOUNDS": 1
+        }
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 10,
+    "avm": 1,
+    "width": 550,
+    "height": 400,
+    "fps": 24,
+    "frames": 1,
+    "tags": 4,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 0
+    },
+    "actions": {
+      "steps": 0,
+      "cachedBlocks": 0,
+      "decodedBytes": 0
+    }
+  },
+  {
+    "name": "bad-signature.swf",
+    "sha256": "c97dda6b85d3f0b6",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Unknown SWF signature: \"XWS\""
+  },
+  {
+    "name": "cws-corrupt.swf",
+    "sha256": "c67e823abe9cd51b",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Could not decompress CWS (zlib): incorrect header check"
+  },
+  {
+    "name": "cws-declared-too-long.swf",
+    "sha256": "e1e47bc2bb6d0de9",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Declared length is 40 bytes but the decompressed SWF has 36"
+  },
+  {
+    "name": "cws-declared-too-short.swf",
+    "sha256": "cb97b999c7883d4b",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Decompressed CWS data exceeds the declared length (24 bytes)"
+  },
+  {
+    "name": "cws-truncated.swf",
+    "sha256": "e4a8ea8cbb4db63c",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Could not decompress CWS (zlib): unexpected end of file"
+  },
+  {
+    "name": "declared-length-huge.swf",
+    "sha256": "89dae717a00fd52c",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Declared length 4294967295 exceeds options.maxFileBytes (52428800)"
+  },
+  {
+    "name": "declared-length-too-small.swf",
+    "sha256": "a5d42b099a89eb7f",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Declared length 10 is smaller than the minimal SWF header (13 bytes)"
+  },
+  {
+    "name": "empty.swf",
+    "sha256": "e3b0c44298fc1c14",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: File is too short (0 bytes) to hold an SWF header"
+  },
+  {
+    "name": "fws-long-header-truncated.swf",
+    "sha256": "865d313ca37105d5",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Long header of JPEGTables at offset 23 is truncated"
+  },
+  {
+    "name": "fws-long-tag-negative.swf",
+    "sha256": "e0fab3a5b4a501c9",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: DoAction at offset 21 declares a negative SI32 length (-1)"
+  },
+  {
+    "name": "fws-long-tag-out-of-bounds.swf",
+    "sha256": "80881d34ac607240",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: DoAction at offset 21 declares 2147483647 byte(s) but only 1 remain in the file"
+  },
+  {
+    "name": "fws-tag-out-of-bounds.swf",
+    "sha256": "6fd407ec5cb57e93",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: SetBackgroundColor at offset 21 declares 10 byte(s) but only 2 remain in the file"
+  },
+  {
+    "name": "fws-truncated-file.swf",
+    "sha256": "2e6811a79820e127",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: File is truncated: declared 36 bytes, got 20"
+  },
+  {
+    "name": "fws-truncated-rect.swf",
+    "sha256": "0b995ee1d38fbcf4",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: SWF header is incomplete: RECT.Xmax needs 31 bit(s) at byte 12 but only 4 remain"
+  },
+  {
+    "name": "fws-truncated-tag-header.swf",
+    "sha256": "f7bb667b3f3cc177",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: Tag header at offset 23 is truncated (1 byte left in the file)"
+  },
+  {
+    "name": "zws.swf",
+    "sha256": "cbb66953e641a938",
+    "status": "failed",
+    "layers": {
+      "parser": {
+        "status": "failed",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": "parser: SWFReader: ZWS uses LZMA compression, which is not implemented yet"
+  }
+]

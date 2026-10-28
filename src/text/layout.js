@@ -69,10 +69,11 @@
      the margins and never moves text left of the margin. AutoSize grows the field from its left edge.
      measure = { width(css, text) -> px, metrics(css, sizePx) -> { ascent, descent } in px } for device fonts.
      Returns { bounds, lines: [{ runs: [{ text, x, baseline, face, format }], bullet }], width, height }, where
-     face is { font, scale } for embedded glyphs or { css } for a device font. */
-  function layoutEditText(character, characters, measure, report) {
+     face is { font, scale } for embedded glyphs or { css } for a device font. `text` replaces the field's
+     initial text (a field bound to a variable); for HTML fields it is HTML. */
+  function layoutEditText(character, characters, measure, report, text) {
     var field = character.field, version = character.version, id = character.id;
-    var base = fieldFormat(field, characters, version), source = field.initialText || '', faces = new Map();
+    var base = fieldFormat(field, characters, version), source = text === undefined ? field.initialText || '' : text, faces = new Map();
     var spans = field.html ? parseHtmlText(source, base, field.multiline, version, function (f, r) { report(f, r, id); })
       : source ? [{ text: source.replace(/\r\n|\r|\n/g, '\n'), format: base }] : [];
     if (field.password) spans = spans.map(function (s) { return { text: s.text.replace(/[^\n]/g, '*'), format: s.format }; });

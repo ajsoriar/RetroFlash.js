@@ -7,7 +7,7 @@
     CX_IDENTITY = M.CX_IDENTITY, concatColorTransform = M.concatColorTransform, cssColor = M.cssColor,
     geometryOf = M.geometryOf, TEXT_BLACK = M.TEXT_BLACK, glyphCommands = M.glyphCommands,
     staticTextGlyphs = M.staticTextGlyphs, GUTTER = M.GUTTER, DEVICE_ASCENT = M.DEVICE_ASCENT,
-    DEVICE_DESCENT = M.DEVICE_DESCENT, layoutEditText = M.layoutEditText;
+    DEVICE_DESCENT = M.DEVICE_DESCENT, layoutEditText = M.layoutEditText, textFieldText = M.textFieldText;
 
   var GRADIENT_HALF = 16384;      // SWF gradients are defined on a 32768-twip square centred on the origin
 
@@ -66,7 +66,10 @@
     ctx.fillStyle = bg ? 'rgb(' + bg.r + ',' + bg.g + ',' + bg.b + ')' : '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     var sx = canvas.width / stage.widthTwips, sy = canvas.height / stage.heightTwips;
-    this.drawClip(root, [sx, 0, 0, sy, -stage.xMin * sx, -stage.yMin * sy], CX_IDENTITY);
+    // The root's own display object holds what scripts set on _root (_x, _alpha, _visible, ...).
+    var top = root.displayObject();
+    if (top.visible === false) return;
+    this.drawClip(root, multiply([sx, 0, 0, sy, -stage.xMin * sx, -stage.yMin * sy], top.matrix), top.cx);
   };
   CanvasRenderer.prototype.drawClip = function (clip, matrix, cx) {
     var ctx = this.ctx, depths = clip.depths(), masks = [];
@@ -84,6 +87,7 @@
         masks.push(obj.clipDepth);
         continue;
       }
+      if (obj.visible === false) continue; // _visible = false (masks still mask)
       if (obj.blendMode > 1) this.report('render:blendMode', 'Blend modes other than normal are drawn as normal.', obj.characterId);
       this.drawObject(obj, world, concatColorTransform(cx, obj.cx));
     }
@@ -120,7 +124,18 @@
     else if (character.type === 'button' && obj.button) this.drawClip(obj.button, world, cx);
     else if (character.type === 'bitmap') this.drawBitmap(character, world, cx);
     else if (character.type === 'text') this.drawText(character, world, cx);
-    else if (character.type === 'editText') this.drawEditText(character, world, cx);
+    else if (character.type === 'editText') this.drawEditText(character, world, cx, obj);
+  };
+  /* The layout of a text field: shared by every instance of the character, or, for a field bound to a
+     variable, the instance's own, laid out again whenever its text changes. */
+  CanvasRenderer.prototype.editTextLayout = function (character, obj) {
+    if (!obj || !obj.binding) return character.layout || (character.layout = layoutEditText(character, this.characters, this.measure, this.report));
+    var text = textFieldText(obj);
+    if (!obj.layout || obj.layoutText !== text) {
+      obj.layoutText = text;
+      obj.layout = layoutEditText(character, this.characters, this.measure, this.report, text);
+    }
+    return obj.layout;
   };
   CanvasRenderer.prototype.textGlyphs = function (character) {
     return character.glyphs || (character.glyphs = staticTextGlyphs(character, this.characters, this.report));
@@ -138,13 +153,13 @@
   /* Text field: optional border (white background, black frame), then the text clipped to the bounds narrowed
      by the gutter horizontally. As in Flash Player, a field that uses device fonts is not drawn when it is
      rotated, skewed or mirrored. */
-  CanvasRenderer.prototype.drawEditText = function (character, world, cx) {
+  CanvasRenderer.prototype.drawEditText = function (character, world, cx, obj) {
     var ctx = this.ctx, field = character.field, scale = Math.sqrt(Math.abs(world[0] * world[3] - world[1] * world[2]));
     if (!scale || !isFinite(scale)) return;
     if (!field.useOutlines && (Math.abs(world[1]) > 0.006 * scale || Math.abs(world[2]) > 0.006 * scale || world[0] <= 0 || world[3] <= 0)) {
       return this.report('render:deviceTextTransform', 'Text fields with device fonts are not drawn when rotated, skewed or mirrored (as in Flash Player).', character.id);
     }
-    var layout = character.layout || (character.layout = layoutEditText(character, this.characters, this.measure, this.report));
+    var layout = this.editTextLayout(character, obj);
     var b = layout.bounds, width = b.xMax - b.xMin, height = b.yMax - b.yMin;
     ctx.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
     if (field.border) {

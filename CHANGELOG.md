@@ -29,8 +29,70 @@
   - **Memory:** filling the budget grew the heap by 40 to 58 MB in headless Chrome and by up to about 120 MB in Node.
   - **Smaller records:** records without a payload share one empty `data` view, which more than halves the memory of one-byte actions.
 - **Push is interpreted, so a malformed `Push` now ends the script** (`avm1:malformedAction`), as a malformed `StoreRegister` or `ConstantPool` does. `Push`, `Pop`, `PushDuplicate`, `StackSwap`, `StoreRegister`, and `ConstantPool` are no longer reported as unsupported.
+- **Text fields bound to a variable show it.** They are no longer reported as `text:variable`.
+  - When a field is placed, an existing variable gives it its text; otherwise its initial text initializes the variable.
+  - Each bound instance has its own layout, laid out again when its text changes.
+- **`SetTarget` paths follow Flash Player's rules**, through `resolvePath` in `src/avm1/variables.js`:
+  - `.` and `:` steps, `this`, and `_root` work only from SWF 5;
+  - a step names a child instance, then a variable;
+  - `resolveTarget` moved to that module.
+- `UNKNOWN_VALUE` moved to `src/avm1/values.js`.
+- **The four AVM1 registers are global to the movie**, shared by every script as in Flash Player; before, each block had its own. `DefineFunction2` functions have their own registers too.
+- **Function definitions, calls, objects, `with`, `try`/`throw`, and `Call` are interpreted**: they are no longer reported, and no longer end the script. Function literals are real functions instead of unknown values.
+- **`GotoFrame` and `GotoLabel` now stop the clip**, as `gotoAndStop` does in Flash Player. Before, the clip kept its play state: in the `fws-actions` fixture the sprite sent to frame 7 now stays there.
+- **Movie clips are values**: `kid`, `_root`, and `_parent` read as the clip, not as an unknown value; properties (`_x`, …) read and set the clip instead of being reported.
+- **`Jump`, `If`, `Return`, and `WaitForFrame2` no longer end the script:** they are followed, and no longer reported as unsupported. A frame script with a `Jump` now reaches what follows the jump target.
 
 ### Added
+
+- **Compatibility corpus (Hito H):**
+  - `tools/corpus.js` (`npm run corpus -- files…`) runs SWF files in Node, the same way every time (fixed clock, fixed random sequence, 60 frames, a pointer probe), and writes a Markdown or JSON matrix that sorts every diagnostic into a layer: parser, vm, api, render, or input;
+  - the version matrix (`--versions`): one bytecode probe per version-dependent rule, run in SWF 4 to 10;
+  - the fixture matrix is committed in `tests/corpus/` (`npm run corpus:fixtures` regenerates it);
+  - **Tests:** `tests/unit/corpus.test.js`.
+- **Reader 0.6.0:** `PlaceObject2`/`PlaceObject3` clip actions (`clipActions`: events, key code, and the action byte range) and `ExportAssets` (`assets`). Clip actions are no longer listed as unsupported.
+- **AVM1 game APIs (Hito G):**
+  - clip events: `onClipEvent` actions and AS2 methods (`onEnterFrame`, `onLoad`, `onUnload`, mouse events, `onPress`, …) in Flash Player's order; clips with button handlers act as buttons;
+  - `Key` (`isDown`, `getCode`, `getAscii`, listeners) with keyboard state kept by the player (`keyup` and focus loss included), `Mouse` (`hide`, `show`, listeners), mouse and key events to every clip;
+  - `getTimer`/`GetTime`, `setInterval`, `setTimeout`, `clearInterval`, `clearTimeout`, run between frames;
+  - dragging (`StartDrag`, `EndDrag`, `startDrag`, `stopDrag`, `_droptarget`);
+  - MovieClip methods: `hitTest`, `getBounds`, `localToGlobal`, `globalToLocal`, `attachMovie`, `createEmptyMovieClip`, `swapDepths`, `getNextHighestDepth`, `getInstanceAtDepth`, `getSWFVersion`;
+  - `Stage`, `Color`, a silent `Sound`, and `DoInitAction`;
+  - the `fws-game.swf` fixture, a mini game played by the tests and in Chrome;
+  - **Tests:** `tests/unit/avm1-game.test.js`.
+- **AVM1 functions and objects (Hito F):**
+  - objects, arrays, and functions (`src/avm1/objects.js`) with prototypes, hidden built-in members, and `for..in` in Flash Player's order; strings, numbers, and booleans have their methods; objects convert through `valueOf()` and `toString()`;
+  - `DefineFunction`/`DefineFunction2` (closures from SWF 6, `this`, `arguments`, `super`, local and preloaded registers), `CallFunction`, `CallMethod`, `NewObject`, `NewMethod`, `Return` values, `Extends`, `InstanceOf`, `CastOp`, `ImplementsOp`, `With`, `Try`/`Throw`, `Call`, `GetMember`, `SetMember`, `Delete`, `Delete2`, `InitArray`, `InitObject`, `Enumerate`, `Enumerate2`;
+  - the movie's runtime (`src/avm1/globals.js`): `Object`, `Function`, `Array`, `String`, `Number`, `Boolean`, `Math`, `Error`, the global functions, and the `MovieClip` methods (`gotoAndPlay`, `duplicateMovieClip`, …), so `_root.gotoAndPlay("label")` works (the `visita.swf` menu buttons now navigate);
+  - new limit `maxCallDepth` (256 nested calls); limits on prototype chains, array length, and string length against hostile scripts; uncaught throws end the block (`avm1:uncaughtThrow`);
+  - **Tests:** `tests/unit/avm1-functions.test.js`.
+- **AVM1 timelines and movie clips (Hito E):**
+  - movie clips as values, with conversions, comparisons, `typeof`, and `TargetPath`; paths through variables that hold clips; default instance names `instanceN`;
+  - the 22 movie clip properties (`src/avm1/properties.js`), through `GetProperty`/`SetProperty` and as variables, with Flash Player's rules for scale, rotation, twips, and invalid values; objects transformed by a script are no longer moved by the timeline; `_visible` is honoured by drawing and hit testing; properties of `_root` move the whole movie;
+  - `GotoFrame2` (numbers, labels, `path:frame`, scene bias, play or stop) and `SetTarget2`;
+  - `CloneSprite` and `RemoveSprite` (`duplicateMovieClip`, `removeMovieClip`) at script depths, kept across timeline rewinds;
+  - **Tests:** `tests/unit/avm1-clips.test.js`.
+- **AVM1 control flow (Hito D):**
+  - `Jump` and `If` follow their branch, including to the end of the block and into the middle of a record. `If` converts its condition with the version's boolean rules.
+  - `Return` ends the block outside functions.
+  - `WaitForFrame` and `WaitForFrame2` count every frame as loaded up to frame 16000 (16001), as for a fully loaded movie in Flash Player, and otherwise skip their records.
+  - A condition that is an unknown value ends the script (`avm1:unknownCondition`) instead of guessing a branch. Malformed branches end it (`avm1:malformedAction`).
+  - Loops are bounded by `maxActionSteps` and `maxActionStack`.
+  - **Tests:** `tests/unit/avm1-control.test.js`. Test helpers for action records, an assembler with labels, and a block runner are in `tests/support/avm1.js`.
+
+- **AVM1 values, operators, and variables (Hito C).**
+  - **Values** (`src/avm1/values.js`): conversions to number, string, and boolean, and the `Equals2`, `StrictEquals`, and `Less2` comparisons, each following Flash Player for the SWF version:
+    - `undefined` is 0 before SWF 7;
+    - from SWF 5, a string with trailing text is NaN;
+    - from SWF 6, `"0x1F"` and `"010"` are hexadecimal and octal integers;
+    - numbers print with 15 significant digits.
+  - **Operators:** every SWF 4 to SWF 7 operator on primitive values: arithmetic, comparisons, logic, strings and `MB` strings, character codes, bitwise actions, `ToInteger`/`ToNumber`/`ToString`, `TypeOf`, and `RandomNumber`. `Trace` prints nothing. An unknown operand gives an unknown result.
+  - **Variables** (`src/avm1/variables.js`):
+    - `GetVariable`, `SetVariable`, `DefineLocal`, and `DefineLocal2` on the variables of each timeline (`Clip.variables`);
+    - Flash Player's paths: `a`, `/path:a`, `path.a`, `_root.kid.a`, `../:a`;
+    - names case-insensitive before SWF 7, and `SetTarget` scoping.
+  - **Not values yet:** movie clips, their properties, and global objects read as unknown values (`avm1:objectValue`); setting a property is reported (`avm1:variableNotSet`).
+  - **Tests:** `tests/unit/avm1-values.test.js` and `tests/unit/avm1-expressions.test.js`.
 
 - **AVM1 stack core.** Each action block has its own stack, four registers, and constant pool. `Push` (every value type, registers, and constants), `Pop`, `PushDuplicate`, `StackSwap`, `StoreRegister`, and `ConstantPool` are executed. Popping an empty stack gives `undefined`.
   - Skipped actions keep the stack in step: they pop their operands and push unknown values (`UNKNOWN_VALUE`), so no later action takes their results for real values. An action whose counts depend on the values leaves the whole stack unknown.

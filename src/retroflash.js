@@ -17,7 +17,11 @@
   if (!M || !M.CanvasRenderer) throw new Error('RetroFlash: load the scripts listed in src/modules.json, in order, before retroflash.js');
   var VERSION = M.VERSION, DEFAULT_LIMITS = M.DEFAULT_LIMITS, playerError = M.playerError,
     resolveLimits = M.resolveLimits, Movie = M.Movie, Clip = M.Clip, createEnv = M.createEnv,
-    InputController = M.InputController, swfKeyCode = M.swfKeyCode, CanvasRenderer = M.CanvasRenderer;
+    InputController = M.InputController, swfKeyCode = M.swfKeyCode, flashKeyCode = M.flashKeyCode, keyAscii = M.keyAscii,
+    CanvasRenderer = M.CanvasRenderer;
+  // Keys that would scroll the page (space, page up/down, end, home, arrows): the movie keeps them.
+  var NAVIGATION_KEYS = { 32: 1, 33: 1, 34: 1, 35: 1, 36: 1, 37: 1, 38: 1, 39: 1, 40: 1 };
+  function now() { return global.performance && global.performance.now ? global.performance.now() : Date.now(); }
   delete global.RetroFlashModules;
 
   var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1 };
@@ -86,10 +90,16 @@
       if (self.input.up()) self.afterInput();
     });
     on('pointercancel', function () { if (ready() && self.input.up()) self.afterInput(); });
+    // Keys: Key.isDown and the key events of clips and listeners, then the KeyPress actions of buttons.
     on('keydown', function (e) {
       if (!ready()) return;
-      if (self.input.key(swfKeyCode(e.key))) { e.preventDefault(); self.afterInput(); }
+      var code = flashKeyCode(e), changed = self.input.keyDown(code, keyAscii(e));
+      if (self.input.key(swfKeyCode(e.key))) changed = true;
+      if (changed || NAVIGATION_KEYS[code]) e.preventDefault();
+      if (changed) self.afterInput();
     });
+    on('keyup', function (e) { if (ready() && self.input.keyUp(flashKeyCode(e))) self.afterInput(); });
+    on('blur', function () { if (self.input) self.input.releaseKeys(); });
   };
   // Runs the actions queued by a button event, re-checks the hovered button, redraws.
   Player.prototype.afterInput = function () {
@@ -190,6 +200,8 @@
   // Fresh root timeline at frame 1, with its frame scripts run (as when the movie starts).
   Player.prototype.restart = function () {
     this.env = createEnv(this.movie, this.report, { actions: this.options.actions, limits: this.limits });
+    var started = now();
+    this.env.scripts.clock = function () { return now() - started; }; // getTimer: milliseconds since the start
     this.root = new Clip(this.env, this.movie.root, 0, null);
     this.root.loop = this.options.loop;
     this.root.gotoFrame(1);
@@ -237,6 +249,7 @@
     this.assertUsable();
     if (!this.root) return;
     this.advance();
+    this.runTimers();
     this.render();
     this.emit('frame', this.root.frame);
   };
@@ -269,6 +282,16 @@
       if (!this.options.loop) this.pause();
     }
   };
+  // Runs the setInterval/setTimeout timers that are due, between frames; true when one ran.
+  Player.prototype.runTimers = function () {
+    var scripts = this.env.scripts;
+    if (!scripts.runTimers()) return false;
+    this.env.instances = 0;
+    scripts.beginUpdate();
+    scripts.run();
+    if (this.input && this.input.afterTick()) scripts.run();
+    return true;
+  };
   Player.prototype.loop = function (time) {
     if (this.state !== 'playing') return;
     var self = this, duration = 1000 / this.fps, steps = 0;
@@ -280,7 +303,8 @@
       steps++;
     }
     if (steps === this.options.maxCatchUpFrames) this.accumulator = Math.min(this.accumulator, duration); // drop frames, don't spiral
-    if (steps) { this.render(); this.emit('frame', this.root.frame); }
+    var timed = this.state === 'playing' && this.runTimers();
+    if (steps || timed) { this.render(); this.emit('frame', this.root.frame); }
     if (this.state === 'playing') this.rafId = global.requestAnimationFrame(function (t) { self.loop(t); });
   };
   Player.prototype.getInfo = function () {

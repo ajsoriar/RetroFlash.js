@@ -72,14 +72,19 @@
     if (c.type === 'shape') return pointInShape(geometryOf(c, report), local[0], local[1]);
     if (c.type === 'bitmap') return local[0] >= 0 && local[1] >= 0 && local[0] < c.width * 20 && local[1] < c.height * 20;
     if (c.type === 'text') return inRect(c.text.bounds, local);
-    if (c.type === 'editText') return inRect(c.layout ? c.layout.bounds : c.field.bounds, local);
+    if (c.type === 'editText') {
+      var layout = obj.layout || c.layout; // a bound field's own layout, else the character's (after drawing)
+      return inRect(layout ? layout.bounds : c.field.bounds, local);
+    }
     if (c.type === 'sprite' && obj.clip) return hitTestList(obj.clip.displayList, world, x, y, report);
     if (c.type === 'button' && obj.button) return hitTestList(obj.button.hitList, world, x, y, report);
     return false;
   }
   function hitTestList(list, matrix, x, y, report) {
     var hit = false;
-    list.forEach(function (obj) { if (!hit && !obj.clipDepth) hit = hitTestObject(obj, multiply(matrix, obj.matrix), x, y, report); });
+    list.forEach(function (obj) {
+      if (!hit && !obj.clipDepth && obj.visible !== false) hit = hitTestObject(obj, multiply(matrix, obj.matrix), x, y, report);
+    });
     return hit;
   }
   /* Topmost button whose hit area contains the point, searching from the highest depth down through sprites.
@@ -89,21 +94,28 @@
     var depths = container.depths();
     for (var i = depths.length - 1; i >= 0; i--) {
       var obj = container.displayList.get(depths[i]);
-      if (obj.clipDepth) continue;
+      if (obj.clipDepth || obj.visible === false) continue; // invisible buttons, and their contents, are not hit
       var world = multiply(matrix, obj.matrix);
       if (obj.button) {
         if (hitTestList(obj.button.hitList, world, x, y, report)) return obj;
       } else if (obj.clip) {
+        // A clip with button handlers (onPress, ...) takes the pointer for everything inside it, as in Flash Player.
+        if (isButtonClip(obj.clip)) {
+          if (hitTestList(obj.clip.displayList, world, x, y, report)) return obj;
+          continue;
+        }
         var found = pickButton(obj.clip, world, x, y, report);
         if (found) return found;
       }
     }
     return null;
   }
+  function isButtonClip(clip) { return !!(clip.env.scripts && clip.env.scripts.isButtonClip(clip)); }
+  // Every button instance and clip with button handlers on stage.
   function collectButtons(container, set) {
     container.displayList.forEach(function (obj) {
       if (obj.button) { set.add(obj); collectButtons(obj.button, set); }
-      else if (obj.clip) collectButtons(obj.clip, set);
+      else if (obj.clip) { if (isButtonClip(obj.clip)) set.add(obj); collectButtons(obj.clip, set); }
     });
     return set;
   }

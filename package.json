@@ -8,7 +8,9 @@
     "build": "node tools/build.js",
     "test": "node tests/run.js",
     "test:dist": "node tools/build.js && node tests/run.js --dist",
-    "fixtures": "node tests/fixtures/build-fixtures.js"
+    "fixtures": "node tests/fixtures/build-fixtures.js",
+    "corpus": "node tools/corpus.js",
+    "corpus:fixtures": "node tools/corpus.js tests/fixtures/valid tests/fixtures/warn tests/fixtures/bad --json tests/corpus/fixtures-matrix.json --md tests/corpus/fixtures-matrix.md"
   },
   "engines": {
     "node": ">=16"

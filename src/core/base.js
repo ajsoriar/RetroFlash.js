@@ -16,7 +16,8 @@
     maxTotalBitmapPixels: 4 * 4096 * 4096,  // pixels of all bitmaps of a movie together (about 256 MB of RGBA)
     maxActionBlocks: 10000,                 // AVM1 action blocks run per tick or input event
     maxActionSteps: 100000,                 // AVM1 actions executed per tick or input event
-    maxActionStack: 100000                  // values on the stack of one AVM1 action block
+    maxActionStack: 100000,                 // values on the stack of one AVM1 action block
+    maxCallDepth: 256                       // nested AVM1 function calls (Flash Player also stops at 256)
   });
 
   function playerError(code, message) {

@@ -11,6 +11,7 @@ const { buildBitmaps } = require('./bitmaps');
 const { buildActions } = require('./actions');
 const { buildButtons } = require('./buttons');
 const { buildText } = require('./text');
+const { buildGame } = require('./game');
 
 const fileAttributes = (raw = 0) => tag(T.FileAttributes, body((w) => w.u32(raw)));
 const background = (r, g, b) => tag(T.SetBackgroundColor, body((w) => w.rgb({ r, g, b })));
@@ -130,7 +131,7 @@ const fixtures = [
     build: () => swf({ tags: unsupportedTags() }),
     expect: {
       signature: 'FWS', version: 10, width: 550, height: 400, fps: 24, frameCount: 1, actualFrameCount: 1, tags: 7, diagnostics: [],
-      unsupported: ['PlaceObject2.clipActions', 'actionscript:DoABC', 'tag:Unknown_1000']
+      unsupported: ['actionscript:DoABC', 'tag:Unknown_1000']
     }
   },
   {
@@ -166,9 +167,19 @@ const fixtures = [
     }
   },
   {
+    file: 'valid/fws-game.swf',
+    description: 'Mini game (tests/fixtures/game.js): a hero moved with the arrow keys by onClipEvent(enterFrame) and Key.isDown, ' +
+      'a coin whose onEnterFrame method uses hitTest to raise _root.score, and a text field bound to score.',
+    build: buildGame,
+    expect: {
+      signature: 'FWS', version: 6, width: 400, height: 200, fps: 12, frameCount: 1, actualFrameCount: 1, tags: 12,
+      diagnostics: [], unsupported: ['actionscript:DoAction']
+    }
+  },
+  {
     file: 'valid/fws-actions.swf',
     description: 'AVM1 timeline-control fixture (tests/fixtures/actions.js): stop/play/gotoLabel/gotoFrame/setTarget in root ' +
-      'and sprite frames, plus unsupported actions (Push, SetVariable, Jump) and a GetURL that must never navigate.',
+      'and sprite frames, a variable, a Jump, and a GetURL that must never navigate.',
     build: buildActions,
     expect: {
       signature: 'FWS', version: 6, width: 200, height: 200, fps: 12, frameCount: 6, actualFrameCount: 6, tags: 19,

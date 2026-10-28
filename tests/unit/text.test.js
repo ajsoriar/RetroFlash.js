@@ -192,13 +192,14 @@ test('layout: AutoSize grows the field; password text is masked', async () => {
   assert.strictEqual(runText(layout(24).lines[0]), '******');
 });
 
-test('placing text fields reports variables and input; text hit-tests by its bounds', async () => {
+test('placing text fields binds variables and reports input; text hit-tests by its bounds', async () => {
   const { movie } = await movieAndLayouts();
   const reported = [];
   const env = I.createEnv(movie, (feature, reason, source) => reported.push([feature, source]));
   const root = new I.Clip(env, movie.root, 0, null);
   root.gotoFrame(1);
-  assert.deepStrictEqual(reported, [['text:variable', 24], ['text:input', 24]]);
+  assert.deepStrictEqual(reported, [['text:input', 24]]);
+  assert.strictEqual(root.variables.get('secret'), 'hidden', 'the bound field initialized its variable');
   const obj = root.displayList.get(1), world = obj.matrix; // text 10 at (400, 1000), bounds 0..830 × -280..500
   assert.strictEqual(I.hitTestObject(obj, world, 400 + 100, 1000 - 100), true);
   assert.strictEqual(I.hitTestObject(obj, world, 400 + 900, 1000), false);

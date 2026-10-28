@@ -1,4 +1,4 @@
-# SWF Reader (v0.5)
+# SWF Reader (v0.6)
 
 A dependency-free JavaScript reader for SWF file structure. It is a single classic script, `swf-reader.js`, that works on its own, and it is the foundation of the player documented below. The reader does not render anything and **never executes ActionScript**.
 
@@ -61,13 +61,13 @@ Values follow the SWF specification:
 
 `SWFReader.BitReader` exposes the bounds-checked, MSB-first bit reader: `readUB`, `readSB`, `readFB`, `align`, `seek`, `readUI8`, `readUI16`, `readSI16`, `readUI32`, `readString`, `readRect`, `readMatrix`, `readCxform`, and `readCxformWithAlpha`.
 
-## Coverage in v0.5
+## Coverage in v0.6
 
 - FWS. CWS (zlib) through `DecompressionStream('deflate')`; decompression stops as soon as the output exceeds the declared length.
 - Header: signature, version, declared length, stage RECT, frame rate (8.8), and frame count.
 - Tag record headers in short and long form, validated against the enclosing range (the file or the sprite). A negative long length is rejected.
 - Recursive index of `DefineSprite` control tags with sprite-local frames, and a check of which tags are allowed inside sprites.
-- Decoded tags: `End`, `ShowFrame`, `SetBackgroundColor`, `FrameLabel` (with the named anchor from SWF 6), `FileAttributes`, `PlaceObject`, `PlaceObject2`, `PlaceObject3` (all fields except clip actions; the filter list is validated and kept as filter names), `RemoveObject`, `RemoveObject2`, and `DefineSprite`.
+- Decoded tags: `End`, `ShowFrame`, `SetBackgroundColor`, `FrameLabel` (with the named anchor from SWF 6), `FileAttributes`, `PlaceObject`, `PlaceObject2`, `PlaceObject3` (every field; the filter list is validated and kept as filter names), `ExportAssets` (since v0.6: `assets`, `{ characterId, name }`), `RemoveObject`, `RemoveObject2`, and `DefineSprite`.
 - `DefineShape`, `DefineShape2`, `DefineShape3`, and `DefineShape4` are decoded (since v0.3). `fields` contains:
   - `shapeId`, `shapeVersion`, `bounds`;
   - `fillStyles`: `solid`, `linear`, `radial`, `focal`, or `bitmap`, with gradient matrices and stops;
@@ -103,8 +103,9 @@ Values follow the SWF specification:
     - when present: `fontId`, `fontClass`, `fontHeight` (also read when only `HasFontClass` is set), `color`, `maxLength`, and the layout (`align`, `leftMargin`, `rightMargin`, `indent`, and `leading`, which are signed);
     - `variableName` and `initialText`.
 - Filter lists (in `PlaceObject3` and button records) are validated by filter type and size, then skipped. An unreadable list in `PlaceObject3` leaves the placement `partial` with `unparsed: ['filterList']`, instead of invalid. The sizes follow SWF19. Only the filter names are kept.
+- Clip actions (since v0.6): a `PlaceObject2`/`PlaceObject3` with the ClipActions flag gives `clipActions`, `[{ events, keyCode, start, end }]`. `events` are the names of the event flags (`load`, `enterFrame`, `unload`, `mouseDown`, `mouseUp`, `mouseMove`, `keyDown`, `keyUp`, `data`, `initialize`, `press`, `release`, `releaseOutside`, `rollOver`, `rollOut`, `dragOver`, `dragOut`, `construct`, `keyPress`); the flags are UI16 up to SWF 5 and UI32 from SWF 6. `keyCode` is set for `keyPress`. `start` and `end` locate the actions in `getTagData(tag)`. An unreadable list leaves the placement `partial` with `unparsed: ['clipActions']`. `movie.codeTags.clipActions` counts the placements with clip actions.
 - Strings: UTF-8 from SWF 6; Latin-1 before SWF 6.
-- `DoAction`, `DoInitAction`, and `DoABC` are counted in `movie.codeTags` and listed as unsupported, because the reader does not interpret them. Their bytes are available through `getTagData`. The player runs a timeline-control subset of `DoAction` (see below).
+- `DoAction`, `DoInitAction`, and `DoABC` are counted in `movie.codeTags` and listed as unsupported, because the reader does not interpret them. Their bytes are available through `getTagData`. The player runs `DoAction` and `DoInitAction` (see below).
 
 ## Limitations
 
@@ -118,7 +119,7 @@ Values follow the SWF specification:
 
 ## Tests
 
-From the project root, run `node tests/run.js` (Node 16+, no dependencies). See [`../tests/COMPATIBILITY.md`](../tests/COMPATIBILITY.md).
+From the project root, run `node tests/run.js` (Node 16+, no dependencies). `node tools/corpus.js` writes the compatibility matrix of any SWF files, by layer. See [`../tests/COMPATIBILITY.md`](../tests/COMPATIBILITY.md).
 
 # RetroFlash.Player (`retroflash.js` v0.4)
 
@@ -128,7 +129,7 @@ Load `../dist/retroflash.min.js` (built by `npm run build`), which holds the rea
 const player = new RetroFlash.Player({
   canvas, autoplay: false, loop: true,
   maxFileBytes: 50 * 1024 * 1024,   // passed to SWFReader.load
-  actions: true,                    // run the AVM1 timeline-control subset
+  actions: true,                    // run the AVM1 subset
   input: true,                      // pointer and keyboard on the canvas drive the movie's buttons
   maxActionSteps: 100000            // any of the limits below
 });
@@ -155,7 +156,8 @@ Budgets against hostile or runaway files. Each limit is a Player option with the
 | `maxTotalBitmapPixels` | 4 × 4096 × 4096 | Pixels of all bitmaps of a movie together | `render:bitmapDecodeFailed` (`BITMAP_BUDGET`) |
 | `maxActionBlocks` | 10,000 | AVM1 action blocks (each `DoAction` or button action list) run in one tick or input event; the rest are dropped | `avm1:budget` |
 | `maxActionSteps` | 100,000 | AVM1 actions executed in one tick or input event; the current block stops | `avm1:budget` |
-| `maxActionStack` | 100,000 | Values on the stack of one AVM1 action block; the block stops | `avm1:budget` |
+| `maxActionStack` | 100,000 | Values on the stack of one AVM1 action block or function call; the block stops | `avm1:budget` |
+| `maxCallDepth` | 256 | Nested AVM1 function calls (and `Call` actions), as in Flash Player; the whole block stops | `avm1:budget` |
 
 ### Source layout
 
@@ -169,7 +171,10 @@ Each player module is a classic script. It takes what it needs from the internal
 | `render/geometry.js` | Shape records to fill and stroke commands, shared by the renderer and hit testing |
 | `display/bitmaps.js` | Bitmap decoding and pixel budgets |
 | `text/fonts.js`, `text/html.js`, `text/layout.js` | Fonts and static text, the HTML subset, and text field layout |
-| `avm1/decoder.js`, `avm1/interpreter.js` | AVM1 decoding (`ActionCode`), and `ActionScheduler` with one `Activation` per block, which runs the timeline-control subset |
+| `avm1/decoder.js` | AVM1 decoding (`ActionCode`) |
+| `avm1/values.js`, `avm1/properties.js`, `avm1/variables.js` | AVM1 values with their conversions and comparisons; movie clip properties, bounds, and paths; target paths, timeline variables, and text fields bound to a variable |
+| `avm1/objects.js`, `avm1/globals.js` | AVM1 objects, arrays, functions, and member access; the movie's runtime with the global object and the built-in classes |
+| `avm1/interpreter.js` | `ActionScheduler`, with one `Activation` per block or call, which runs AVM1 bytecode |
 | `display/movie.js` | The character dictionary and frame lists |
 | `display/clip.js`, `display/button.js` | The display context (`createEnv`), timelines and display lists, and button instances |
 | `input/hit-test.js`, `input/input.js` | Hit testing, and pointer and keyboard input |
@@ -260,38 +265,41 @@ A scrubbing `seek` and the creation of a button's hit area enter frames without 
   - Buttons that leave the stage are forgotten without events. A button that appears under a still pointer gets its roll-over after the next frame.
   - The cursor becomes a hand over buttons.
 
-### AVM1 subset (frame scripts and button actions)
+### AVM1 (frame scripts and button actions)
 
-The player runs the `DoAction` scripts of each frame it enters (root and sprites alike) and the actions of button events, with a controlled interpreter. It never evaluates JavaScript, never navigates, and never touches the page.
+The player runs the `DoAction` scripts of each frame it enters (root and sprites alike) and the actions of button events, with a controlled interpreter for ActionScript 1 and 2 bytecode. It never evaluates JavaScript, never navigates, and never touches the page.
 
 **Executed:**
 
 - `Stop`, `Play`;
 - `NextFrame`, `PreviousFrame` (go and stop);
-- `GotoFrame`;
-- `GotoLabel`, matched case-insensitively if no exact match exists;
-- `SetTarget`, with slash paths (`/a/b`, `../a`) and dot paths (`_root.a`, `_parent`, `this`). Instance names are case-insensitive before SWF 7;
-- `WaitForFrame`: every frame counts as loaded;
-- the stack core: `Push`, `Pop`, `PushDuplicate`, `StackSwap`, `StoreRegister`, and `ConstantPool` (see [Stack and registers](#stack-and-registers)).
+- `GotoFrame` and `GotoLabel` (go and stop, as `gotoAndStop` in Flash Player); labels match case-insensitively if no exact match exists;
+- `GotoFrame2`, `SetTarget2`, `GetProperty`, `SetProperty`, `TargetPath`, `CloneSprite` (`duplicateMovieClip`), and `RemoveSprite` (`removeMovieClip`) (see [Movie clips](#movie-clips));
+- `SetTarget`, with the target paths described in [Variables](#variables). Instance names are case-insensitive before SWF 7;
+- control flow (see [Control flow](#control-flow)): `Jump`, `If`, `Return`, `WaitForFrame`, and `WaitForFrame2`;
+- the stack core: `Push`, `Pop`, `PushDuplicate`, `StackSwap`, `StoreRegister`, and `ConstantPool` (see [Stack and registers](#stack-and-registers));
+- the operators on values (see [Values and operators](#values-and-operators)):
+  - SWF 4: `Add`, `Subtract`, `Multiply`, `Divide`, `Equals`, `Less`, `And`, `Or`, `Not`, `StringEquals`, `StringLength`, `StringExtract`, `StringAdd`, `StringLess`, `ToInteger`, `CharToAscii`, `AsciiToChar`, the `MB` string actions, and `RandomNumber`;
+  - SWF 5 and later: `Add2`, `Less2`, `Equals2`, `Greater`, `StrictEquals`, `StringGreater`, `Modulo`, `Increment`, `Decrement`, `ToNumber`, `ToString`, `TypeOf`, and the six bitwise actions;
+- `GetVariable`, `SetVariable`, `DefineLocal`, and `DefineLocal2` on timeline variables (see [Variables](#variables));
+- `Trace`, which prints nothing, as in a release Flash Player;
+- `StartDrag`, `EndDrag`, and `GetTime` (see [Game APIs](#game-apis));
+- functions, objects, and calls (see [Functions and objects](#functions-and-objects)): `DefineFunction`, `DefineFunction2`, `CallFunction`, `CallMethod`, `NewObject`, `NewMethod`, `Call`, `GetMember`, `SetMember`, `Delete`, `Delete2`, `InitArray`, `InitObject`, `Enumerate`, `Enumerate2`, `InstanceOf`, `Extends`, `CastOp`, `ImplementsOp`, `With`, `Try`, and `Throw`.
 
 **Ignored, but reported:**
 
-- `GetURL`: the player never loads URLs;
-- `ToggleQuality`, `StopSounds`;
-- `DefineFunction` and `DefineFunction2`: their bodies are skipped.
+- `GetURL` and `GetURL2` (`getURL`, `loadMovie`, `loadVariables`): the player never loads URLs;
+- `ToggleQuality`, `StopSounds`.
 
-**Everything else** is reported as `avm1:<ActionName>`:
-
-- Other actions (`SetVariable`, `GetVariable`, `Add`, and so on) are skipped. The values they would push are unknown.
-- Control flow and calls (`Jump`, `If`, `Call`, `CallFunction`, `CallMethod`, `GotoFrame2`, `SetTarget2`, `With`, `Try`, `Throw`, `Return`, `WaitForFrame2`) **end the script**, because their outcome is unknown without the full VM. AS2 code such as `_root.gotoAndPlay(3)` or `if (…) stop();` is therefore not followed yet.
+**Unknown action codes** are reported as `avm1:Unknown_0x..` and skipped, as Flash Player skips them.
 
 **Malformed actions:**
 
 - A record that runs past its block is reported as `avm1:malformedAction` when the script reaches it, and the script stops there. Records are decoded only as the script reaches them, after the step is charged to `maxActionSteps`, so a large block costs no more than the actions that run.
-- An executed action whose operands are malformed ends the script with the same report. This applies to `GotoFrame`, `GotoLabel`, `SetTarget`, `Push`, `StoreRegister`, `ConstantPool`, and function definitions whose body runs past the block.
+- An executed action whose operands are malformed ends the script with the same report. This applies to `GotoFrame`, `GotoLabel`, `SetTarget`, `Push`, `StoreRegister`, `ConstantPool`, `Jump`, `If`, `WaitForFrame`, `WaitForFrame2`, and function definitions whose body runs past the block.
 - Other actions keep the behaviour listed above, even when their operands are malformed.
 
-**Limits:** by default, 10,000 action blocks and 100,000 actions per tick or input event, and 100,000 values on the stack of one block (`maxActionBlocks`, `maxActionSteps`, `maxActionStack`; see [Limits](#limits)).
+**Limits:** by default, 10,000 action blocks and 100,000 actions per tick or input event, 100,000 values on the stack of one block, and 256 nested function calls (`maxActionBlocks`, `maxActionSteps`, `maxActionStack`, `maxCallDepth`; see [Limits](#limits)). An uncaught `Throw`, too many nested calls, or a string grown past its limit ends the whole block (`avm1:uncaughtThrow`, `avm1:budget`).
 
 **Decoding budget:** decoded records stay cached for the life of the movie, so a block that runs again is not decoded again. The blocks of a movie share a budget of 1 MiB of bytecode. This is an internal limit, not a Player option.
 
@@ -306,21 +314,165 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
 
 #### Stack and registers
 
-Each block runs in its own `Activation`. It holds the program counter, the clip the block belongs to, the `SetTarget` target, and its own stack, four registers, and constant pool, all empty at the start. The full VM will add the scope chain there.
+Each block, and each function call, runs in its own `Activation`. It holds the program counter, the clip the code belongs to, the `SetTarget` target, `this`, the scope chain, and its own stack and constant pool, empty at the start.
 
-- **Values** are `undefined`, `null`, booleans, numbers, and strings. Objects come with the full VM.
+- **Values** are `undefined`, `null`, booleans, numbers, strings, movie clips, and objects (see [Functions and objects](#functions-and-objects)).
+- **Registers:** the movie has four global registers (0–3), shared by every script, as in Flash Player. A `DefineFunction2` function has its own registers as well.
 - **`Push`** puts its values on the stack in order. A register or constant pool index that does not exist pushes `undefined`.
-- **`StoreRegister`** copies the top of the stack without popping it. Only registers 0–3 exist outside `DefineFunction2`, so a store to any other register is ignored.
+- **`StoreRegister`** copies the top of the stack without popping it. Only registers 0–3 exist outside `DefineFunction2` functions, so a store to any other register is ignored.
 - **`ConstantPool`** replaces the block's pool.
 - **Underflow:** popping an empty stack gives `undefined`, as in Flash Player.
 - **Overflow:** the stack never holds more than `maxActionStack` values. The action that would push past the limit, even halfway through a `Push`, ends the script with `avm1:budget`, and the stack is released.
-- **Skipped actions** keep the stack in step:
-  - an action with a fixed count pops its operands and pushes an *unknown value* (`UNKNOWN_VALUE`) for each result;
-  - a function literal (`DefineFunction` with no name) pushes an unknown value;
-  - an action whose count depends on the values (`InitArray`, `NewObject`, `Enumerate`, and so on) leaves the whole stack unknown, and every later pop past the known values gives an unknown value;
-  - an unknown action code has no effect, as in Flash Player.
+- **Unknown values** (`UNKNOWN_VALUE`) come from built-in objects that are not implemented yet (see [Variables](#variables)). An operator with an unknown operand gives an unknown result. An unknown value never reaches the timeline and never decides a branch, so a value that was never computed cannot steer the movie.
+- **Unknown action codes** have no effect on the stack, as in Flash Player.
 
-  An unknown value never reaches the timeline, so a value that was never computed cannot steer the movie. No action that the player executes reads the stack yet.
+#### Control flow
+
+- **`Jump` and `If`** go to the target the decoder computed: the offset counts from the end of the branch record. A target may be the end of the block (the script ends there) or the middle of another record, which is then decoded from that byte. A branch whose target lies outside the block, or whose operand is short, ends the script with `avm1:malformedAction`.
+- **`If`** pops its condition and converts it with the version's boolean rules (see [Values and operators](#values-and-operators)): before SWF 7, `"abc"` is false; from SWF 7 it is true. A condition that is an unknown value **ends the script** with `avm1:unknownCondition`: the player never guesses a branch.
+- **`Return`** pops its value and, outside functions, ends the block.
+- **`WaitForFrame` and `WaitForFrame2`:** the whole movie is loaded before it plays, so every frame counts as loaded, except frame numbers above 16000 (16001 for `WaitForFrame2`, as in Flash Player), the most a SWF can have.
+  - For a frame that is not loaded, the next N action records are skipped (records, not bytes); skipping stops at `ActionEndFlag`.
+  - `WaitForFrame2` pops the frame: an integer number, or a string holding one; anything else counts as frame 0. An unknown value ends the script (`avm1:unknownCondition`).
+  - Without a target (after a `SetTarget` that found nothing), the frame counts as loaded.
+- **Loops** run until they end or until `maxActionSteps` actions have run in the tick or event (`avm1:budget`). A loop that pushes values also stops at `maxActionStack`. The same script with the same variables always follows the same path.
+
+#### Values and operators
+
+Conversions follow Flash Player for each SWF version (`avm1/values.js`):
+
+| Conversion | Rule |
+|---|---|
+| To number | `undefined` and `null` are 0 before SWF 7, NaN from SWF 7. Booleans are 1 and 0. |
+| String to number | Leading whitespace is allowed. From SWF 5 the rest must be a number (`"12abc"` is NaN); SWF 4 ignores the trailing text and gives 0 for a string that is not a number. From SWF 6, `"0x1F"` is hexadecimal and `"010"` octal (32-bit integers); a sign before `0x` gives NaN. `"Infinity"` is not a number. |
+| To string | `undefined` is `""` before SWF 7 and `"undefined"` from SWF 7. Booleans are `"1"` and `"0"` before SWF 5. Numbers have up to 15 significant digits, in exponent form from 1e15 up and below 1e-5 (`"1e+15"`, `"2.5e-7"`); `0.1 + 0.2` prints `"0.3"`. |
+| To boolean | Before SWF 7 a string is true when it converts to a number other than 0; from SWF 7 when it is not empty. |
+
+- **Results:** comparisons and logical operators push booleans in every version, as Flash Player does.
+- **SWF 4 operators** (`Add`, `Equals`, `Less`, …) convert both operands to numbers, so two strings that are not numbers compare equal in SWF 4 (both are 0) and different from SWF 5 (both are NaN). Dividing by zero gives the string `"#ERROR#"` in SWF 4, and Infinity or NaN from SWF 5.
+- **`Add2`** concatenates when either operand is a string. **`Equals2`** treats `undefined` and `null` as equal, compares a boolean as 1 or 0, and a number with a string as numbers; NaN equals NaN. **`Less2`** compares two strings by UTF-16 code units and anything else as numbers, and gives `undefined` when a number is NaN.
+- **Strings:** `StringExtract` and `MBStringExtract` count from 1, and a negative length takes the rest. Lengths and character codes are in UTF-16 units; a surrogate gives U+FFFD.
+- **Bitwise actions** work on 32-bit integers and use the low 5 bits of a shift count. `BitURShift` gives a signed result in SWF 8 and 9, as Flash Player does.
+- **`RandomNumber`** uses `Math.random`.
+- **Known differences:** Flash Player prints numbers with its own digit loop, which differs in a few last-digit rounding cases (for example `0.8000000000000005`, printed `"0.8"` here and `"0.800000000000001"` by Flash Player). Strings in SWF 5 and earlier are decoded as Latin-1, not in the system code page.
+
+#### Variables
+
+Variables live on timelines: the root and each sprite instance (`avm1/variables.js`). They keep their values between frames, and a sprite instance that is removed and placed again starts with none. Names are case-insensitive before SWF 7.
+
+- **Scope:** a frame script or button action reads and sets the variables of its own timeline. After `SetTarget`, variables go to the target; after a `SetTarget` that found nothing, they go to the root, as in Flash Player.
+- **Paths:** `GetVariable` and `SetVariable` accept the forms Flash Player understands:
+  - `name`;
+  - `path:name` and `path.name` (the right-most `:` or `.` separates the variable; `GetVariable` splits at `.` only from SWF 5);
+  - `/path` without a variable, for a timeline (SWF 5 and later);
+  - target paths with `/`, `..`, `_root`, `_parent`, `_level0`, and, from SWF 5, `this`, `.`, and `:`. A step names a child sprite instance first, then a variable.
+- **Movie clips and properties:** a name can be a movie clip property (`_x`, `kid._alpha`, `/kid:_currentframe`; see [Movie clips](#movie-clips)), `_root`, `_parent`, `this`, or a child instance (`kid`), which reads as the movie clip itself. In SWF 4 a movie clip reads as `undefined`, as in Flash Player. A path step can be a variable that holds a movie clip.
+- **Global names:** a plain name not found on the scope chain is looked up on the global object (`Math`, `Array`, `parseInt`, …; see [Functions and objects](#functions-and-objects)). Built-in objects that are not implemented yet (`Date`, `TextField`, `XML`, `System`, …) read as unknown values, reported as `avm1:objectValue`.
+- **Setting:**
+  - `SetVariable` on a movie clip property sets the property;
+  - `SetVariable` on `_root` or `_parent`, or through a path that crosses an unknown value, sets nothing and reports `avm1:variableNotSet`;
+  - a name that is an unknown value reports `avm1:unknownName`;
+  - a path that leads nowhere sets nothing, as in Flash Player.
+- **Locals:** outside functions, `DefineLocal` sets a variable of the scope timeline, and `DefineLocal2` creates one as `undefined` when it does not exist.
+
+**Text fields bound to a variable** (`VariableName` of `DefineEditText`) show the variable of their timeline, or of the timeline their path names (`_root.score`, `kid:label`).
+
+- When the field is placed, an existing variable gives the field its text. Otherwise, non-empty initial text becomes the variable's value.
+- Afterwards the field shows the variable's current value, converted to a string: `score = 42` shows `42`. HTML fields read the value as HTML.
+- While the variable does not exist or holds an unknown value, the field keeps its last text.
+- Typing into input fields is not supported yet.
+
+#### Movie clips
+
+Movie clips are values (`avm1/properties.js`, `avm1/values.js`): `typeof` gives `"movieclip"`, a clip converts to its dot path (`"_level0.kid"`) and to NaN, `Add2` concatenates its path, and two clips are equal when their paths are. `TargetPath` gives the dot path, or `undefined` for anything that is not a clip. Instances placed without a name are named `instance1`, `instance2`, … in the order they are created.
+
+**Properties**, read and set with `GetProperty`/`SetProperty` (by index) or as variables (case-insensitive names):
+
+| # | Property | Read | Set |
+|---|---|---|---|
+| 0, 1 | `_x`, `_y` | position in the parent, in pixels | truncated to twips; Infinity becomes the lowest integer |
+| 2, 3 | `_xscale`, `_yscale` | percent | keeps rotation and the hidden skew |
+| 4, 5, 12 | `_currentframe`, `_totalframes`, `_framesloaded` | frames (every frame is loaded) | read-only |
+| 6 | `_alpha` | percent of the alpha multiplier | Infinity sets 0 |
+| 7 | `_visible` | boolean | through a number: 0 hides; `"false"` (NaN) does nothing |
+| 8, 9 | `_width`, `_height` | size of the bounds in the parent, in pixels | scales the clip |
+| 10 | `_rotation` | degrees, -180 to 180 | normalized to ±180, keeps the scale |
+| 11 | `_target` | slash path (`/kid`, `/` for the root) | read-only |
+| 13 | `_name` | instance name | renames the instance |
+| 14, 15 | `_droptarget`, `_url` | `""` (`undefined` for `_droptarget` before SWF 6) | read-only |
+| 16–19 | `_highquality`, `_focusrect`, `_soundbuftime`, `_quality` | 1, `true` (1 before SWF 6), 5, `"HIGH"` | ignored |
+| 20, 21 | `_xmouse`, `_ymouse` | the pointer in the clip's own space, in pixels | read-only |
+
+- `undefined`, `null`, and NaN set no numeric property. Scale, rotation, and skew are read from the matrix once and kept, so setting one keeps the others exactly; the matrix holds 32-bit floats, as in Flash Player.
+- `_width` and `_height` use the bounds of shapes, text, text fields, bitmaps, and visible children. On a rotated clip, setting them matches the axis-aligned box of the rotated content, which can differ from Flash Player's own rule.
+- An object whose matrix or colour transform a script changed is no longer moved by the timeline, as in Flash Player.
+- `_visible = 0` hides the clip and its children, and they are not hit. Masks still mask. Properties of `_root` apply to the whole movie.
+
+**Timeline actions:**
+
+- `GotoFrame2` addresses the target (or the root). Its frame is an integer number, or a string: a frame number, a label, or `path:frame` / `path.frame` for another timeline. The scene bias is added; a frame below 1 does nothing, one past the end goes to the last frame. The clip then plays or stops. An unknown frame ends the script (`avm1:unknownValue`).
+- `SetTarget2` takes a movie clip or a path. `undefined` returns to the script's own timeline up to SWF 6; from SWF 7 it leaves no target (timeline actions do nothing, and variables go to the root).
+- `GetProperty` and `SetProperty` take a clip or a path; an empty path is the current target. Invalid indexes and targets read `undefined` and set nothing.
+- `CloneSprite` (`duplicateMovieClip`) creates a new instance of a sprite instance's character in the same parent, at the given depth plus 16384 (script depths 0 to 2,130,706,428, as in Flash Player). It copies the matrix and colour transform, takes the new name, and replaces what was at that depth; its frame-1 script runs. The root cannot be duplicated.
+- `RemoveSprite` (`removeMovieClip`) removes only clips created by `CloneSprite`. Removing the current target returns to the script's own timeline.
+- Clips created by scripts stay when their parent's timeline rewinds.
+
+#### Game APIs
+
+**Clip events.** Every frame, each clip on stage gets its `enterFrame` event, then its timeline advances; children come before their parents, as in Flash Player. A clip placed by its parent's timeline, by `duplicateMovieClip`, or by `attachMovie` gets `initialize` and `load` after its own frame-1 script; a clip that leaves the stage, and every clip inside it, gets `unload`. An event runs:
+
+- the clip's `onClipEvent` actions for it (`PlaceObject2`/`3` clip actions, run in the clip's own context), then
+- the clip's AS2 method: `onEnterFrame`, `onLoad`, `onUnload`, `onMouseDown`, `onMouseUp`, `onMouseMove`, `onPress`, `onRelease`, `onReleaseOutside`, `onRollOver`, `onRollOut`, `onDragOver`, `onDragOut`, `onData`, called with the clip as `this`.
+
+Events, timers, and listeners are queued with the frame scripts and share their budgets.
+
+**Mouse and keyboard.** Mouse moves, presses, and releases go to every clip (`mouseMove`, `mouseDown`, `mouseUp`) and then to the `Mouse` listeners. Keys go to every clip's `onClipEvent(keyDown/keyUp)` and then to the `Key` listeners (`onKeyDown`, `onKeyUp`); `onClipEvent(keyPress "<key>")` runs for its key (SWF key codes, as buttons use). The player keeps arrow keys, space, page and home/end keys from scrolling the page, and releases every key when the canvas loses focus.
+
+- `Key`: `isDown(code)` (Windows virtual key codes, as in Flash Player: `Key.LEFT` is 37), `getCode`, `getAscii`, `isToggled` (always false), the key constants, `addListener`, `removeListener`.
+- `Mouse`: `hide` (the cursor becomes `none`), `show`, `addListener`, `removeListener`.
+- **Clips as buttons:** a clip with `onPress`, `onRelease`, `onReleaseOutside`, `onRollOver`, `onRollOut`, `onDragOver`, or `onDragOut` (methods or clip actions) is picked like a button: its shapes are its hit area, it takes the pointer for everything inside it, the cursor becomes a hand, and the events follow the button rules.
+
+**Timers.** `getTimer()` and `GetTime` give the milliseconds since the movie started. `setInterval(fn, ms, …)` and `setInterval(object, "method", ms, …)` call the function every `ms` milliseconds; `setTimeout` once; `clearInterval` and `clearTimeout` stop them. Timers run between frames, at most once per check each; a movie has at most 10,000 timers. `updateAfterEvent` does nothing: the player redraws after every event.
+
+**Dragging.** `startDrag` (the action and the method) makes a clip follow the pointer, with its origin under the pointer (`lockCenter`) or keeping its offset, inside an optional rectangle in its parent's space. One clip is dragged at a time; `stopDrag` (`EndDrag`) ends it. `_droptarget` is the slash path of the deepest clip under the pointer.
+
+**MovieClip methods:** `hitTest(x, y, shapeFlag)` (a point in `_root` coordinates, against the shapes or the bounds), `hitTest(target)` (overlapping bounds), `getBounds(space)` (an empty clip gives 6710886.35 on every side, as in Flash Player), `localToGlobal`, `globalToLocal`, `attachMovie(name, instanceName, depth, initObject)` (by `ExportAssets` name; the init object's properties are copied), `createEmptyMovieClip`, `swapDepths(depth or clip)` (both clips are then managed by scripts), `getNextHighestDepth`, `getInstanceAtDepth`, `getSWFVersion`, `startDrag`, `stopDrag`.
+
+**Other objects:** `Stage` (`width`, `height`, `scaleMode`, `align`, `showMenu`; no resize events), `Color` (`setRGB`, `getRGB`, `setTransform`, `getTransform` on a clip's colour transform), and `Sound`, which is accepted and silent (reported once as `sound:Sound`).
+
+**`DoInitAction`** scripts run once per movie, the first time their frame is entered, before that frame's `DoAction` scripts, on the root timeline.
+
+#### Functions and objects
+
+**Objects** (`avm1/objects.js`) have a prototype and their own properties; names are case-insensitive before SWF 7. Arrays keep their elements in order and their `length` in step. Movie clips are objects too: their members are their properties (`_x`, …), `_root` and `_parent`, their variables, their child instances, and then `MovieClip.prototype`. Strings, numbers, and booleans take their members from `String.prototype` and the others; `"abc".length` is 3.
+
+- `InitObject` and `InitArray` build objects and arrays (`{x: 1}`, `[1, 2]`); `GetMember`, `SetMember`, `Delete`, and `Delete2` read, set, and delete members.
+- `for..in` (`Enumerate`, `Enumerate2`) lists own properties first, the most recently added first, as Flash Player does, then the prototype chain's. Built-in members are hidden.
+- **Conversions:** an object becomes a number through its `valueOf()` and a string through its `toString()` (`"[object Object]"` by default, `"[type Function]"` for a function without one); `Add2` uses `valueOf()` and concatenates when it gives no primitive. Two objects are equal only when they are the same object.
+
+**Functions:** `DefineFunction` and `DefineFunction2` make functions; a named one becomes a variable (a local inside a function), an anonymous one is pushed.
+
+- **Calls:** `CallFunction` calls a function by name, with `this` set to the object it was found on (the timeline, for a timeline function) or the target. `CallMethod` calls `object.name(…)` with `this` set to the object; on `undefined` or `null` it gives `undefined`, and an empty name calls the object itself. Calling something that is not a function gives `undefined`.
+- **Scope:** from SWF 6 a function closes over the scope chain and timeline where it was defined; in SWF 5 it runs on the timeline of `this` (or the caller's target) with a fresh scope chain. Parameters, `DefineLocal` names, `arguments` (with `callee` and `caller`), and `super` are locals; a plain `SetVariable` of a name that is not a local sets it on the timeline.
+- **`DefineFunction2`** has its own registers and preloads `this`, `arguments`, `super`, `_root`, `_parent`, and `_global` into them from register 1, as its flags ask; parameters with a register go there.
+- **`Return`** gives the call's value; a function that ends without one gives `undefined`.
+- **Construction:** `NewObject` and `NewMethod` (`new`) make an object with the constructor's `prototype`, call the constructor with it as `this` (with a hidden `__constructor__`), and give it, unless the constructor returns an object. `Extends` sets up a subclass prototype; `super(…)` calls the superclass constructor and `super.method(…)` the superclass method. `InstanceOf` and `CastOp` follow the prototype chain; `ImplementsOp` is accepted without checks.
+- **`with`** puts an object on top of the scope chain for its body; `with` on `undefined` or `null` skips the body.
+- **`try`/`catch`/`finally`:** a `Throw` in the try body (or in a function it calls) goes to the catch body, with the stack trimmed back and the value in the catch variable or register; the finally body always runs. An uncaught `Throw` ends the block (`avm1:uncaughtThrow`).
+- **`Call`** runs the frame scripts of another frame (a number, a label, or `path:frame`) at once, without going there.
+
+**Built-ins** (`avm1/globals.js`), on the global object of each movie (`_global`):
+
+- `Object` (`toString`, `valueOf`, `hasOwnProperty`, `isPropertyEnumerable`, `isPrototypeOf`; `addProperty` and `watch` return false), `Function` (`call`, `apply`), `Error` (`message`, `toString`);
+- `Array` (`push`, `pop`, `shift`, `unshift`, `slice`, `splice`, `concat`, `join`, `reverse`, `sort` and `sortOn` with a compare function or the `CASEINSENSITIVE`, `DESCENDING`, `UNIQUESORT`, `RETURNINDEXEDARRAY`, and `NUMERIC` flags, `toString`);
+- `String` (`charAt`, `charCodeAt`, `concat`, `indexOf`, `lastIndexOf`, `slice`, `substring`, `substr`, `split`, `toLowerCase`, `toUpperCase`, `String.fromCharCode`), `Number` (`toString(radix)`, the constants), `Boolean`; called as functions they convert;
+- `Math` (every method and constant; `random` uses `Math.random`);
+- `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `escape`, `unescape`, `NaN`, `Infinity`; `trace` and `ASSetPropFlags` do nothing;
+- `MovieClip` methods: `play`, `stop`, `gotoAndPlay`, `gotoAndStop`, `nextFrame`, `prevFrame`, `duplicateMovieClip`, `removeMovieClip`, `getDepth`, `getBytesLoaded`, `getBytesTotal`; `getURL` is ignored and reported.
+
+**Limits against hostile scripts:** prototype chains are followed for at most 256 steps; array indexes from 16,777,216 on are plain properties (an array never grows past that); a string built by concatenation, `join`, `concat`, `escape`, or `fromCharCode` that would pass 16,777,216 characters ends the block (`avm1:budget`).
+
+**Not supported yet:** getter/setter properties (`addProperty`), `watch`, `Object.registerClass`, and the other built-in classes.
 
 #### Decoder
 
@@ -356,7 +508,6 @@ Each block runs in its own `Activation`. It holds the program counter, the clip 
 - Nesting deeper than `maxNesting` levels (32 by default), through sprites or buttons, is refused (`render:nestingLimit`).
 - At most `maxInstances` sprite and button instances (100,000 by default) are created per step: a tick, a seek, or an input event (`render:instanceLimit`).
 
-**Not run:** `DoInitAction` and clip event actions.
 
 ### Not supported yet
 
@@ -364,7 +515,7 @@ Each of these is reported in `getDiagnostics().unsupported` when it is met:
 
 - ActionScript outside the subset above;
 - characters that are placed but not drawn: morph shapes, video, `DefineFont4` text;
-- text fields bound to a variable (`text:variable`; they show their initial text), editing input fields (`text:input`), selection, scrolling, HTML images, kerning and letter spacing, style sheets, and text fields used as masks;
+- editing input fields (`text:input`), selection, scrolling, HTML images, kerning and letter spacing, style sheets, and text fields used as masks;
 - button sounds (`DefineButtonSound`), menu tracking (`trackAsMenu` buttons behave as push buttons), masks during hit testing, and buttons nested inside buttons;
 - per-channel colour transforms on bitmaps (only the alpha multiplier is applied);
 - clipped bitmap fills beyond the bitmap's edges (Flash repeats the edge pixels there; the player leaves them empty);
@@ -380,6 +531,6 @@ Two parts are only checked by eye, through the demo:
 
 ## Next steps
 
-1. The full AVM1 stack machine (phase 5), so AS2 control flow and method calls such as `_root.gotoAndPlay()` (used by the `visita.swf` menu buttons) are followed. Variables would also feed text fields bound to them.
+1. Grow the compatibility corpus (`tools/corpus.js`, see `tests/COMPATIBILITY.md`) with authorized SWF files, and fix what it finds.
 2. Sound.
 3. Morph shapes and filters.

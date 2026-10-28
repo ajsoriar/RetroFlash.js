@@ -121,7 +121,7 @@ test('DefineFunction/DefineFunction2: the body after the record is skipped and t
     const { root, reported } = await run([B.doAction(record, body, B.A.stop()), show(), show(), show(), end()], { frameCount: 3 });
     assert.strictEqual(root.frame, 1, 'function body not run');
     assert.strictEqual(root.playing, false, 'stop() after the function ran');
-    assert.ok(reported.some((f) => /^avm1:DefineFunction2?$/.test(f)));
+    assert.ok(!reported.some((f) => /^avm1:DefineFunction2?$/.test(f)), 'function definitions are interpreted');
   }
 });
 
@@ -215,7 +215,7 @@ const sprite = (id, ...tags) => B.tag(B.T.DefineSprite, Buffer.concat([B.body((w
 
 test('limits: defaults, overrides, and invalid values', () => {
   const D = RetroFlash.defaultLimits;
-  assert.deepStrictEqual(Object.keys(D), ['maxNesting', 'maxInstances', 'maxBitmapPixels', 'maxTotalBitmapPixels', 'maxActionBlocks', 'maxActionSteps', 'maxActionStack']);
+  assert.deepStrictEqual(Object.keys(D), ['maxNesting', 'maxInstances', 'maxBitmapPixels', 'maxTotalBitmapPixels', 'maxActionBlocks', 'maxActionSteps', 'maxActionStack', 'maxCallDepth']);
   assert.ok(Object.isFrozen(D));
   assert.deepStrictEqual(headlessPlayer().limits, D);
   const custom = headlessPlayer({ maxNesting: 4, maxActionSteps: 50, maxBitmapPixels: null });

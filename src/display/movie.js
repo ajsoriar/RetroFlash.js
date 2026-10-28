@@ -44,7 +44,7 @@
   }
 
   function Movie(swf) {
-    var characters = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = [], fontInfos = [];
+    var characters = Object.create(null), exports = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = [], fontInfos = [];
     // A definition whose body could not be decoded still defines its id (first UI16), so placements report
     // it as an invalid character rather than a missing one.
     function invalidCharacter(tag) {
@@ -78,6 +78,8 @@
         if (f) buttonColors[f.buttonId] = f.colorTransforms;
       } else if (tag.code === 17) {
         if (f) buttonSounds.push(f.buttonId);
+      } else if (tag.code === 56) {
+        if (f) f.assets.forEach(function (a) { if (!(a.name in exports)) exports[a.name] = a.characterId; });
       } else if (tag.code === 8) {
         if (!jpegTables && tag.length) jpegTables = swf.getTagData(tag);
       } else if (tag.code === 39 && tag.children && tag.status !== 'invalid') {
@@ -107,6 +109,7 @@
     var root = buildTimeline(swf.tags);
     this.swf = swf;
     this.characters = characters;
+    this.exports = exports; // ExportAssets: linkage name -> character id (attachMovie)
     this.jpegTables = jpegTables;
     this.buttonSounds = buttonSounds;
     this.root = { type: 'sprite', id: 0, name: 'root', frames: root.frames, labels: root.labels };

@@ -22,11 +22,11 @@ const pool = (...strings) => rec(0x88, strings.length & 0xff, strings.length >> 
 // prepare(act) runs before the block, to instrument the activation.
 function exec(records, limits, prepare) {
   const reported = [];
-  const scheduler = { limits: I.resolveLimits(limits), steps: 0, report: (feature) => reported.push(feature) };
+  const scheduler = { version: 6, limits: I.resolveLimits(limits), steps: 0, report: (feature) => reported.push(feature) };
   const act = new I.Activation(scheduler, null, new I.ActionCode(Uint8Array.from(records.flat()), 6), 'test');
   if (prepare) prepare(act);
   act.run();
-  return { act, reported, stack: Array.from(act.stack), registers: Array.from(act.registers) };
+  return { act, reported, stack: Array.from(act.stack), registers: Array.from(act.rt.registers) };
 }
 
 test('stack: Push puts values of every type on the stack, in order', () => {
@@ -75,26 +75,17 @@ test('constant pool: Push reads it by index; a later pool replaces it; missing e
   assert.deepStrictEqual(Array.from(act.constants), ['c']);
 });
 
-test('skipped actions keep the stack in step: what they push is unknown', () => {
-  const add = exec([push(N(1), N(2)), [0x0a], push(S('v')), [0x1c]]); // Add, GetVariable
-  assert.deepStrictEqual(add.stack, [U, U]);
-  assert.ok(add.reported.includes('avm1:Add') && add.reported.includes('avm1:GetVariable'));
-  assert.deepStrictEqual(exec([push(S('x'), N(1), S('keep'), S('v'), N(2)), [0x1d]]).stack, ['x', 1, 'keep'], 'SetVariable pops two');
-  assert.deepStrictEqual(exec([push(N(1), N(2), N(3)), [0x23]]).stack, [], 'SetProperty pops three');
-  assert.deepStrictEqual(exec([push(N(1)), [0x70]]).stack, [1], 'an unknown action code has no effect');
-
-  // InitArray pops a count that depends on the values: everything below is unknown afterwards.
-  const array = exec([push(N(7), N(1), N(1)), [0x42], push(S('top')), POP, POP, DUP]);
-  assert.strictEqual(array.act.stackUnknown, true);
-  assert.deepStrictEqual(array.stack, [U, U], 'popping past the known values gives unknown values, not undefined');
-  assert.strictEqual(exec([push(N(1)), [0x42], store(1)]).registers[1], U);
+test('unknown action codes are reported and skipped without touching the stack, as in Flash Player', () => {
+  const out = exec([push(N(1)), [0x70], rec(0xa0, 1, 2), push(N(2))]);
+  assert.deepStrictEqual(out.stack, [1, 2]);
+  assert.ok(out.reported.includes('avm1:Unknown_0x70') && out.reported.includes('avm1:Unknown_0xa0'));
 });
 
-test('function definitions: a function literal leaves an unknown value; a named function does not', () => {
+test('function definitions: a function literal leaves the function on the stack; its body is skipped', () => {
   const literal = exec([rec(0x9b, ...str(''), 0, 0, 1, 0), [0x07], push(N(1))]);
-  assert.deepStrictEqual(literal.stack, [U, 1], 'the body (Stop) is skipped');
-  assert.deepStrictEqual(exec([rec(0x9b, ...str('f'), 0, 0, 0, 0)]).stack, []);
-  assert.deepStrictEqual(exec([rec(0x8e, ...str(''), 0, 0, 0, 0, 0, 0, 0)]).stack, [U], 'DefineFunction2 too');
+  assert.strictEqual(literal.stack.length, 2);
+  assert.deepStrictEqual([I.typeOf(literal.stack[0]), literal.stack[1]], ['function', 1], 'the body (Stop) is skipped');
+  assert.strictEqual(I.typeOf(exec([rec(0x8e, ...str(''), 0, 0, 0, 0, 0, 0, 0)]).stack[0]), 'function', 'DefineFunction2 too');
 });
 
 test('stack core: malformed Push, StoreRegister and ConstantPool end the script', () => {
@@ -139,12 +130,14 @@ test('limits: a block is decoded only as far as it runs', () => {
 test('a record that runs past the block is reported when it is reached', () => {
   const cut = [0x96, 9, 0, 0];
   assert.ok(exec([push(N(1)), cut]).reported.includes('avm1:malformedAction'));
-  const stopped = exec([push(N(1)), rec(0x9e), cut]); // Call ends the script first
-  assert.deepStrictEqual(stopped.reported, ['avm1:Call']);
+  const stopped = exec([push(N(1)), [0x3e], cut]); // Return ends the script first
+  assert.deepStrictEqual(stopped.reported, [], 'the truncated record is never reached');
 });
 
 test('stack effects: the table lists only skipped actions', () => {
-  const handled = [0x04, 0x05, 0x06, 0x07, 0x17, 0x4c, 0x4d, 0x81, 0x83, 0x87, 0x88, 0x8a, 0x8b, 0x8c, 0x8e, 0x96, 0x9b];
+  const handled = [0x04, 0x05, 0x06, 0x07, 0x17, 0x1c, 0x1d, 0x20, 0x22, 0x23, 0x24, 0x25, 0x26, 0x3c, 0x41, 0x4c, 0x4d,
+    0x81, 0x83, 0x87, 0x88, 0x8a, 0x8b, 0x8c, 0x8e, 0x96, 0x9b, 0x9f, ...Object.keys(I.OPERATORS).map(Number)];
+  for (const code of Object.keys(I.OPERATORS)) assert.ok(I.ACTIONS[code], '0x' + Number(code).toString(16) + ' is an action');
   const endScript = [0x20, 0x2a, 0x3d, 0x3e, 0x52, 0x8d, 0x8f, 0x94, 0x99, 0x9d, 0x9e, 0x9f];
   for (const code of Object.keys(I.STACK_EFFECTS).map(Number)) {
     assert.ok(I.ACTIONS[code], '0x' + code.toString(16) + ' is an action');

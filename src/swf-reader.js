@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
 
-  var VERSION = '0.5.0';
+  var VERSION = '0.6.0';
 
   var TAG_NAMES = {
     0:'End', 1:'ShowFrame', 2:'DefineShape', 4:'PlaceObject', 5:'RemoveObject',
@@ -47,7 +47,7 @@
   var REASON_AVM1 = 'AVM1 bytecode detected; the reader does not interpret it (RetroFlash.Player runs only a timeline-control subset).';
   var REASON_AVM2 = 'AVM2 (ActionScript 3) bytecode detected; it is never executed.';
   var UNPARSED_REASONS = {
-    clipActions: 'AVM1 clip event actions; not parsed and never executed.',
+    clipActions: 'AVM1 clip event actions that could not be read; they never run.',
     filterList: 'Filter list could not be read (unknown filter id or truncated); it and the optional fields after it are left unparsed.',
     controlTags: 'Sprite nesting deeper than options.maxSpriteDepth; contents not indexed.'
   };
@@ -325,6 +325,56 @@
     if (flags & 0x20) f.name = r.readString(ctx.version, label + '.Name');
     if (flags & 0x40) f.clipDepth = r.readUI16(label + '.ClipDepth');
     return f;
+  }
+
+  /* CLIPACTIONS (SWF19, PlaceObject2/3 with the ClipActions flag): Reserved UI16, AllEventFlags, then
+     CLIPACTIONRECORDs up to an EventFlags of 0. Event flags are UI16 up to SWF 5 and UI32 from SWF 6, their
+     bits MSB first in each byte. Each record: EventFlags, ActionRecordSize UI32, KeyCode UI8 with the KeyPress
+     event (counted in the size), then the actions. Returns [{ events, keyCode, start, end }], the actions as a
+     byte range of the tag data. */
+  var CLIP_EVENTS = [
+    'keyUp', 'keyDown', 'mouseUp', 'mouseDown', 'mouseMove', 'unload', 'enterFrame', 'load',
+    'dragOver', 'rollOut', 'rollOver', 'releaseOutside', 'release', 'press', 'initialize', 'data',
+    null, null, null, null, null, 'construct', 'keyPress', 'dragOut'
+  ];
+  // Event names of an EventFlags field, or null for the end flag (all bits clear).
+  function readClipEventFlags(r, ctx, what) {
+    var count = ctx.version >= 6 ? 4 : 2, events = [], any = false;
+    for (var i = 0; i < count; i++) {
+      var b = r.readUI8(what);
+      if (b) any = true;
+      for (var bit = 0; bit < 8; bit++) {
+        var name = CLIP_EVENTS[i * 8 + bit];
+        if (name && (b & (0x80 >> bit))) events.push(name);
+      }
+    }
+    return any ? events : null;
+  }
+  function readClipActions(r, ctx, label) {
+    var start = r.start, records = [];
+    r.readUI16(label + '.ClipActions.Reserved');
+    readClipEventFlags(r, ctx, label + '.ClipActions.AllEventFlags');
+    for (var events; (events = readClipEventFlags(r, ctx, label + '.ClipActionRecord.EventFlags'));) {
+      var size = r.readUI32(label + '.ClipActionRecord.ActionRecordSize'), at = r.byteOffset();
+      if (at + size > r.end) fail('TRUNCATED_DATA', label + ' clip action record of ' + size + ' bytes runs past the tag', at);
+      var record = { events: events, keyCode: 0, start: 0, end: at + size - start };
+      if (events.indexOf('keyPress') >= 0 && size > 0) record.keyCode = r.readUI8(label + '.ClipActionRecord.KeyCode');
+      record.start = r.byteOffset() - start;
+      records.push(record);
+      r.seek(at + size, label + '.ClipActionRecord');
+    }
+    return records;
+  }
+  // The clip actions of a placement; unreadable ones are left unparsed and the placement is kept.
+  function placementClipActions(r, ctx, f, label, unparsed) {
+    f.hasClipActions = true;
+    ctx.codeTags.clipActions++;
+    try {
+      f.clipActions = readClipActions(r, ctx, label);
+    } catch (err) {
+      if (!isReaderError(err)) throw err;
+      unparsed.push('clipActions');
+    }
   }
 
   /* Shapes (DefineShape 1-4). `shapeVersion` selects the per-version layout: RGB colours in versions 1-2,
@@ -696,10 +746,16 @@
       var flags = r.readUI8('PlaceObject2.Flags');
       var f = { move: !!(flags & 0x01), depth: r.readUI16('PlaceObject2.Depth') };
       readPlacementFields(r, ctx, flags, f, 'PlaceObject2');
-      if (flags & 0x80) { f.hasClipActions = true; ctx.codeTags.clipActions++; unparsed.push('clipActions'); }
+      if (flags & 0x80) placementClipActions(r, ctx, f, 'PlaceObject2', unparsed);
       return f;
     },
     28: function (r) { return { depth: r.readUI16('RemoveObject2.Depth') }; },
+    // ExportAssets: linkage names of characters, which attachMovie uses.
+    56: function (r, ctx) {
+      var count = r.readUI16('ExportAssets.Count'), assets = [];
+      for (var i = 0; i < count; i++) assets.push({ characterId: r.readUI16('ExportAssets.Tag'), name: r.readString(ctx.version, 'ExportAssets.Name') });
+      return { assets: assets };
+    },
     43: function (r, ctx, tag) {
       var f = { name: r.readString(ctx.version, 'FrameLabel.Name') };
       if (ctx.version >= 6 && r.remainingBytes() > 0) f.namedAnchor = r.readUI8('FrameLabel.NamedAnchorFlag') === 1;
@@ -736,7 +792,7 @@
       if (flags2 & 0x04) f.bitmapCache = r.readUI8('PlaceObject3.BitmapCache');
       if (flags2 & 0x20) f.visible = r.readUI8('PlaceObject3.Visible');
       if (flags2 & 0x40) f.backgroundColor = r.readRGBA('PlaceObject3.BackgroundColor');
-      if (flags & 0x80) { f.hasClipActions = true; ctx.codeTags.clipActions++; unparsed.push('clipActions'); }
+      if (flags & 0x80) placementClipActions(r, ctx, f, 'PlaceObject3', unparsed);
       return f;
     },
     7: buttonDecoder(1),

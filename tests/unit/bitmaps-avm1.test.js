@@ -97,14 +97,18 @@ test('AVM1: gotoLabel + play, setTarget + gotoFrame on a named instance, stop', 
   assert.strictEqual(root.frame, 5, 'frame 4 skipped by the goto');
   assert.strictEqual(root.playing, false, 'stop() in frame 5');
   assert.strictEqual(spinner().frame, 7, 'spinner sent to frame 7 through setTarget');
-  assert.strictEqual(spinner().playing, true);
-  for (const f of ['avm1:SetVariable', 'avm1:GetURL']) assert.ok(reported.includes(f), f + ' reported');
-  assert.ok(!reported.includes('avm1:Push'), 'Push is interpreted');
+  assert.strictEqual(spinner().playing, false, 'GotoFrame stops the clip (gotoAndStop), as in Flash Player');
+  assert.ok(reported.includes('avm1:GetURL'), 'GetURL reported');
+  assert.ok(!reported.includes('avm1:Push') && !reported.includes('avm1:SetVariable'), 'Push and SetVariable are interpreted');
+  assert.strictEqual(root.variables.get('x'), '1', 'frame 5 sets x = "1" on the root (SetTarget "" returns to it)');
 });
 
 test('AVM1: sprite frame scripts stop their own timeline; a stopped parent keeps children playing', async () => {
   const { root, tick, spinner } = await actionsMovie();
   tick(2);
+  tick(3);
+  assert.strictEqual(spinner().frame, 7, 'stopped by the GotoFrame');
+  spinner().playing = true; // as a play() would
   tick(7); // spinner: 7 → 8, 9, 10, 1, 2, 3, 4
   assert.strictEqual(spinner().frame, 4);
   assert.strictEqual(root.frame, 5, 'root stays stopped');
@@ -115,12 +119,12 @@ test('AVM1: sprite frame scripts stop their own timeline; a stopped parent keeps
   assert.strictEqual(spinner().frame, 5);
 });
 
-test('AVM1: control flow ends the script (reported); unsupported actions never run', async () => {
+test('AVM1: a Jump is followed (not reported); its target runs', async () => {
   const { other, reported, tick } = await actionsMovie();
-  assert.ok(reported.includes('avm1:Jump'));
-  assert.strictEqual(other().playing, true, 'the stop() after the Jump is not reached by the subset');
+  assert.ok(!reported.includes('avm1:Jump'));
+  assert.strictEqual(other().playing, false, 'Jump(0) lands on the stop() right after it');
   tick(1);
-  assert.strictEqual(other().frame, 2);
+  assert.strictEqual(other().frame, 1);
 });
 
 test('AVM1: actions can be disabled; scripts queued since a mark can be dropped (scrubbing seek)', async () => {

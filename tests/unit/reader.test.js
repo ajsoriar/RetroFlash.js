@@ -13,7 +13,7 @@ test('public API: frozen SWFReader with load, BitReader, version and tag names',
   assert.ok(Object.isFrozen(SWFReader));
   assert.strictEqual(typeof SWFReader.load, 'function');
   assert.strictEqual(typeof SWFReader.BitReader, 'function');
-  assert.strictEqual(SWFReader.version, '0.5.0');
+  assert.strictEqual(SWFReader.version, '0.6.0');
   assert.strictEqual(SWFReader.tagNames[39], 'DefineSprite');
   assert.deepStrictEqual({ ...SWFReader.defaultOptions }, { maxFileBytes: 52428800, maxTags: 500000, maxSpriteDepth: 4, strict: false });
 });
@@ -156,9 +156,8 @@ test('unsupported content is listed with counts, reasons and first location', as
   assert.strictEqual(byFeature['tag:Unknown_1000'].count, 1);
   assert.strictEqual(byFeature['tag:Unknown_1000'].firstPath, '1');
   assert.match(byFeature['actionscript:DoABC'].reason, /never executed/);
-  assert.strictEqual(movie.tags[3].status, 'partial');
-  assert.deepStrictEqual(movie.tags[3].unparsed, ['clipActions']);
-  assert.deepStrictEqual(movie.tags[3].fields, { move: false, depth: 1, characterId: 2, hasClipActions: true });
+  assert.strictEqual(movie.tags[3].status, 'decoded', 'clip actions are read (here, none)');
+  assert.deepStrictEqual(movie.tags[3].fields, { move: false, depth: 1, characterId: 2, hasClipActions: true, clipActions: [] });
   assert.strictEqual(movie.tags[4].status, 'decoded');
   assert.deepStrictEqual(movie.tags[4].fields, { move: false, depth: 2, characterId: 2, filters: ['blur'], blendMode: 3 });
   assert.deepStrictEqual(movie.codeTags, { avm1: 0, avm2: 1, clipActions: 1, buttonActions: 0 });

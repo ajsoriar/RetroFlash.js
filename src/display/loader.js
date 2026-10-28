@@ -72,13 +72,14 @@
 
   /* The loads of one movie (env.loads). request() asks the host for a URL; what arrives is kept until apply(),
      which the player calls between frames, so content changes at a frame boundary as in Flash Player.
-     - host(request): request is { url, type: 'movie' | 'variables', method: null | 'GET' | 'POST' }; with a
+     - host(request): request is { url, type: 'movie' | 'variables' | 'sound', method: null | 'GET' | 'POST' }; with a
        method it also has `variables` ([[name, value], ...], sent as Flash Player sends them: added to the URL
        for GET, and as `body`, URL-encoded, for POST). It returns (or resolves to) a Uint8Array, an ArrayBuffer,
        a typed array, a Blob, or, for variables, a string; for a movie load it may also give an image the
        browser already decoded (HTMLImageElement, ImageBitmap or canvas). null or undefined refuses the URL.
        The URL is passed as the script wrote it; the host resolves it. A host error with a `code` of
        LOAD_ERRORS is reported as such.
+     - Sounds (Sound.loadSound) are MP3 files.
      - Movies are SWF files; images are JPEG, PNG or GIF files. Their bitmaps share one pixel budget
        (limits.maxBitmapPixels per image, limits.maxTotalBitmapPixels for everything loaded at once), given back
        when the content is unloaded. */
@@ -101,8 +102,10 @@
   /* loadMovie (kind 'movie') or loadVariables (kind 'variables') of `url` into `clip`. A movie load empties the
      clip at once; an empty URL only empties it (unloadMovie). A newer movie load into the same clip, or an
      unload, cancels the older one. Without a host loader nothing changes. `variables` are the pairs a load with
-     a method (1 GET, 2 POST) sends. */
-  LoadQueue.prototype.request = function (clip, url, kind, method, variables) {
+     a method (1 GET, 2 POST) sends. A sound load (kind 'sound', Sound.loadSound) gives what arrived to
+     receiver(result, error) instead: result is { sound, bytes }; `clip` is the Sound's target, and nothing
+     arrives once it has left the stage. */
+  LoadQueue.prototype.request = function (clip, url, kind, method, variables, receiver) {
     if (kind === 'movie' && url === '') {
       clip.loadToken = ++this.serial;
       clip.clearContent();
@@ -142,7 +145,7 @@
       .then(function (result) { return { result: result }; }, function (error) { return { error: error }; })
       .then(function (outcome) {
         self.pending--;
-        Object.assign(outcome, { clip: clip, token: token, kind: kind, url: url });
+        Object.assign(outcome, { clip: clip, token: token, kind: kind, url: url, receiver: receiver });
         if (self.interaction) self.interaction({
           direction: 'outgoing', channel: 'load', status: self.closed ? 'discarded' : outcome.error ? 'failed' : 'received',
           url: String(url).split(/[?#]/)[0], resourceType: kind, method: request.method || 'GET',
@@ -159,6 +162,7 @@
     var self = this;
     if (data === null || data === undefined) return Promise.reject(loadError('LOAD_REFUSED', 'The host page did not give this URL.'));
     if (kind === 'variables' && typeof data === 'string') return Promise.resolve({ variables: parseVariables(data) });
+    if (kind === 'sound') return toBytes(data).then(function (bytes) { return soundOf(bytes, url, self.maxFileBytes); });
     var drawable = kind === 'movie' && drawableOf(data);
     if (drawable) {
       // Decoded by the browser (for example a cross-origin image the page may show but not read).
@@ -189,9 +193,11 @@
       if (outcome.error) {
         var code = outcome.error.code, known = LOAD_ERRORS[code] || ['load:failed', 'A loaded URL could not be used.'];
         self.report(known[0], known[1], outcome.url + (code === 'LOAD_REFUSED' ? '' : ': ' + outcome.error.message));
+        if (outcome.receiver) { outcome.receiver(null, outcome.error); changed = true; }
         return;
       }
       changed = true;
+      if (outcome.receiver) return outcome.receiver(result, null);
       if (result.variables) {
         var rt = M.runtimeOf(clip.env.scripts);
         result.variables.forEach(function (pair) { M.setMember(rt, clip, pair[0], pair[1]); });
@@ -217,6 +223,19 @@
     this.contents.forEach(function (clip) { clip.releaseContent(); });
     this.contents.clear();
   };
+  /* An MP3 file as a sound character (the samples of a loaded sound are decoded by the audio output). */
+  function soundOf(bytes, url, maxFileBytes) {
+    if (maxFileBytes && bytes.length > maxFileBytes) throw loadError('LOAD_TOO_LARGE', bytes.length + ' bytes exceed options.maxFileBytes');
+    var mp3 = M.parseMp3(bytes);
+    if (!mp3) throw loadError('LOAD_TYPE', 'The data is not an MP3 file.');
+    return {
+      bytes: bytes.length,
+      sound: {
+        type: 'sound', id: url, name: url, format: 2, rate: mp3.rate, is16Bit: true, stereo: mp3.stereo,
+        sampleCount: mp3.sampleCount, seekSamples: 0, bytes: bytes.subarray(mp3.start)
+      }
+    };
+  }
   // Frees a load that will not be shown.
   function discard(outcome, queue) {
     var result = outcome.result;

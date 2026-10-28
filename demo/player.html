@@ -22,12 +22,12 @@ the root and <code>DefineSprite</code> timelines, <code>clipDepth</code> masks, 
 Static text uses the movie's embedded glyphs. Text fields use embedded or device fonts, with word wrap, alignment and an HTML subset.
 Frame scripts run through a controlled AVM1 subset, including expressions, control flow, functions, objects, clip events and common MovieClip APIs; unsupported features are reported below.
 Buttons respond to the mouse (hover, press, release) and to the keyboard once the canvas has focus.
-Sound, morph shapes and text input are not supported yet; what a movie uses is listed below.
-The player never fetches anything: when a script loads a movie, an image or variables (<code>loadMovie</code>, <code>loadVariables</code>), the page answers with the file of the same name added below.
-Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code>, <code>fws-buttons.swf</code> or <code>fws-text.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
+Morph shapes, video and text input are not supported yet; sound starts once you click or press a key on the page (browsers require it); what a movie uses is listed below.
+The player never fetches anything: when a script loads a movie, an image, variables or a sound (<code>loadMovie</code>, <code>loadVariables</code>, <code>Sound.loadSound</code>), the page answers with the file of the same name added below.
+Try <code>tests/fixtures/valid/fws-animation.swf</code>, <code>fws-bitmaps.swf</code>, <code>fws-actions.swf</code>, <code>fws-buttons.swf</code>, <code>fws-text.swf</code> or <code>fws-sound.swf</code>. Structure inspector: <a href="index.html">index.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>
 <input id="file" type="file" accept=".swf,application/x-shockwave-flash">
-<p class="extra"><label for="extra">Add files the movie loads</label> (SWF, JPEG, PNG, GIF, variables): <span id="extras">none</span><br>
+<p class="extra"><label for="extra">Add files the movie loads</label> (SWF, JPEG, PNG, GIF, MP3, variables): <span id="extras">none</span><br>
 Add these before opening the main SWF. For the launcher demo, add <code>visor.swf</code> here, then open <code>visor-launcher-andres.swf</code>. The gallery also requests <code>img1.jpg</code> to <code>img7.jpg</code>. You can also drop the launcher first and its dependencies together onto the SWF area. If the launcher is already open, reopen it after adding files; refused requests are not retried.</p>
 <input id="extra" type="file" multiple>
 <p id="status">No movie loaded.</p>
@@ -61,6 +61,8 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
 <script src="../src/avm1/external.js"></script>
 <script src="../src/avm1/globals.js"></script>
 <script src="../src/avm1/interpreter.js"></script>
+<script src="../src/audio/codecs.js"></script>
+<script src="../src/audio/mixer.js"></script>
 <script src="../src/display/movie.js"></script>
 <script src="../src/display/clip.js"></script>
 <script src="../src/display/loader.js"></script>
@@ -69,6 +71,7 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
 <script src="../src/input/input.js"></script>
 <script src="../src/render/canvas-renderer.js"></script>
 <script src="../src/browser/host.js"></script>
+<script src="../src/browser/web-audio.js"></script>
 <script src="../src/retroflash.js"></script>
 <script src="../src/browser/legacy-autoplay.js"></script>
 <script>

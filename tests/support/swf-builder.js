@@ -411,6 +411,93 @@ function defineEditText(id, f) {
   }));
 }
 
+// ---- Sounds ---------------------------------------------------------------------------------------------
+// format: 0/3 PCM, 1 ADPCM, 2 MP3, ...; rate: SoundRate code 0-3 (5.5, 11, 22, 44 kHz).
+function soundFormat(w, { format, rate, is16Bit = true, stereo = false }) {
+  w.ub(4, format).ub(2, rate).ub(1, is16Bit ? 1 : 0).ub(1, stereo ? 1 : 0);
+}
+// SOUNDINFO: { syncStop, syncNoMultiple, inPoint, outPoint, loopCount, envelope: [[pos44, left, right]] }
+function soundInfo(w, info = {}) {
+  const has = (k) => info[k] !== undefined;
+  w.ub(2, 0).bit(info.syncStop).bit(info.syncNoMultiple).bit(has('envelope')).bit(has('loopCount')).bit(has('outPoint')).bit(has('inPoint'));
+  if (has('inPoint')) w.u32(info.inPoint);
+  if (has('outPoint')) w.u32(info.outPoint);
+  if (has('loopCount')) w.u16(info.loopCount);
+  if (has('envelope')) { w.u8(info.envelope.length); for (const [pos, l, r] of info.envelope) w.u32(pos).u16(l).u16(r); }
+}
+// spec: { format, rate, is16Bit, stereo, sampleCount, data, seekSamples (MP3) }
+function defineSound(id, spec) {
+  return tag(14, body((w) => {
+    w.u16(id);
+    soundFormat(w, spec);
+    w.u32(spec.sampleCount);
+    if (spec.format === 2) w.u16((spec.seekSamples || 0) & 0xffff);
+    w.raw(spec.data);
+  }));
+}
+const startSound = (id, info) => tag(15, body((w) => { w.u16(id); soundInfo(w, info); }));
+// sounds: [overUpToIdle, idleToOverUp, overUpToOverDown, overDownToOverUp], each null or { id, info }.
+const defineButtonSound = (buttonId, sounds) => tag(17, body((w) => {
+  w.u16(buttonId);
+  for (const sound of sounds) { if (sound) { w.u16(sound.id); soundInfo(w, sound.info); } else w.u16(0); }
+}));
+// spec: stream format plus sampleCount (per frame) and latencySeek (MP3); playback rate, size and type repeat it.
+const soundStreamHead = (spec, version = 2) => tag(version === 2 ? 45 : 18, body((w) => {
+  w.ub(4, 0).ub(2, spec.rate).ub(1, spec.is16Bit === false ? 0 : 1).ub(1, spec.stereo ? 1 : 0); // playback
+  soundFormat(w, spec);
+  w.u16(spec.sampleCount);
+  if (spec.format === 2) w.u16((spec.latencySeek || 0) & 0xffff);
+}));
+const soundStreamBlock = (data) => tag(19, data);
+// 16-bit little-endian PCM from samples in [-1, 1] (interleave stereo channels before).
+function pcm16(samples) {
+  const out = Buffer.alloc(samples.length * 2);
+  samples.forEach((v, i) => out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(v * 32767))), i * 2));
+  return out;
+}
+/* ADPCM encoder (IMA steps with SWF's 2- to 5-bit codes), written separately from the player's decoder.
+   channels: arrays of 16-bit integer samples (one per channel, same length). */
+const ADPCM_STEPS = [7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73,
+  80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658,
+  724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026,
+  4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350,
+  22385, 24623, 27086, 29794, 32767];
+const ADPCM_INDEX = {
+  2: [-1, 2], 3: [-1, -1, 2, 4], 4: [-1, -1, -1, -1, 2, 4, 6, 8],
+  5: [-1, -1, -1, -1, -1, -1, -1, -1, 1, 2, 4, 6, 8, 10, 13, 16]
+};
+function adpcm(channels, bits = 4) {
+  const w = new BitWriter(), n = channels[0].length, state = channels.map(() => ({ predicted: 0, index: 0 }));
+  const signBit = 1 << (bits - 1);
+  w.ub(2, bits - 2);
+  for (let i = 0; i < n; i++) {
+    if (i % 4096 === 0) {
+      // InitialIndex is UB[6]: a packet starts from step index 63 at most.
+      channels.forEach((ch, c) => { state[c].predicted = ch[i]; state[c].index = Math.min(63, state[c].index); w.sb(16, ch[i]).ub(6, state[c].index); });
+      continue;
+    }
+    channels.forEach((ch, c) => {
+      const st = state[c], step = ADPCM_STEPS[st.index];
+      let delta = ch[i] - st.predicted, code = 0;
+      if (delta < 0) { code = signBit; delta = -delta; }
+      let change = step >> (bits - 1);
+      for (let bit = signBit >> 1, part = step; bit > 0; bit >>= 1, part >>= 1) {
+        if (delta >= part) { code |= bit; delta -= part; change += part; }
+      }
+      st.predicted = Math.max(-32768, Math.min(32767, code & signBit ? st.predicted - change : st.predicted + change));
+      st.index = Math.max(0, Math.min(88, st.index + ADPCM_INDEX[bits][code & (signBit - 1)]));
+      w.ub(bits, code);
+    });
+  }
+  return w.bytes();
+}
+// MPEG-1 layer III frames of silence (44.1 kHz, 128 kbit/s, mono): 417 bytes each, an all-zero body.
+function mp3Silence(frames) {
+  const frame = Buffer.alloc(417);
+  frame.set([0xff, 0xfb, 0x90, 0xc0]);
+  return Buffer.concat(Array.from({ length: frames }, () => frame));
+}
+
 const T = {
   End: 0, ShowFrame: 1, DefineShape: 2, PlaceObject: 4, RemoveObject: 5, SetBackgroundColor: 9, DoAction: 12,
   PlaceObject2: 26, RemoveObject2: 28, DefineSprite: 39, FrameLabel: 43, DoInitAction: 59,
@@ -439,5 +526,6 @@ function swf({ signature = 'FWS', version = 10, declaredLength, append, ...rest 
 module.exports = {
   BitWriter, signedBits, rect, matrix, cxform, body, tag, defineShape, T, swf, movieBody, STAGE_550x400,
   splitJpeg, png, crc32, defineBitsLossless, defineBitsJPEG2, defineBitsJPEG3, defineBits, jpegTables, A, doAction,
-  defineButton2, defineButton, defineButtonCxform, glyphShape, defineFont2, defineText, defineEditText
+  defineButton2, defineButton, defineButtonCxform, glyphShape, defineFont2, defineText, defineEditText,
+  soundInfo, defineSound, startSound, defineButtonSound, soundStreamHead, soundStreamBlock, pcm16, adpcm, mp3Silence
 };

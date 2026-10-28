@@ -9,6 +9,7 @@
 | fws-game.swf | 6 | 1 | 1808 | ok | ok | ok | ok | ok | ok |  |
 | fws-minimal.swf | 10 | 1 | 0 | ok | ok | ok | ok | ok | ok |  |
 | fws-nested-sprite.swf | 10 | 1 | 0 | partial | partial | ok | ok | ok | ok | SPRITE_FRAME_COUNT_MISMATCH, SPRITE_MISSING_END, TAG_NOT_ALLOWED_IN_SPRITE ×2 |
+| fws-sound.swf | 6 | 12 | 18 | ok | ok | ok | ok | ok | ok |  |
 | fws-text.swf | 10 | 1 | 0 | partial | ok | ok | ok | partial | ok | text:input |
 | fws-timeline.swf | 10 | 2 | 1 | ok | ok | ok | ok | ok | ok |  |
 | fws-unsupported.swf | 10 | 1 | 0 | partial | partial | ok | ok | partial | ok | actionscript:DoABC, tag:Unknown_1000, render:blendMode ×7, render:missingCharacter ×2 |

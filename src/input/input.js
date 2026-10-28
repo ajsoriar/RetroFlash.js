@@ -37,6 +37,7 @@
       return;
     }
     target.button.runActions(condition);
+    target.button.playSound(condition);
     target.button.setState(state);
     if (target.button.character.trackAsMenu) this.env.report('input:trackAsMenu', 'Menu-tracking buttons are handled as push buttons.', target.characterId);
   };

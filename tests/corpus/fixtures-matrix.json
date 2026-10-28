@@ -422,6 +422,52 @@
     }
   },
   {
+    "name": "fws-sound.swf",
+    "sha256": "99598e5910b63c22",
+    "status": "ok",
+    "layers": {
+      "parser": {
+        "status": "ok",
+        "features": {}
+      },
+      "vm": {
+        "status": "ok",
+        "features": {}
+      },
+      "api": {
+        "status": "ok",
+        "features": {}
+      },
+      "render": {
+        "status": "ok",
+        "features": {}
+      },
+      "input": {
+        "status": "ok",
+        "features": {}
+      }
+    },
+    "error": null,
+    "version": 6,
+    "avm": 1,
+    "width": 320,
+    "height": 200,
+    "fps": 12,
+    "frames": 12,
+    "tags": 39,
+    "codeTags": {
+      "avm1": 0,
+      "avm2": 0,
+      "clipActions": 0,
+      "buttonActions": 1
+    },
+    "actions": {
+      "steps": 18,
+      "cachedBlocks": 1,
+      "decodedBytes": 124
+    }
+  },
+  {
     "name": "fws-text.swf",
     "sha256": "d7c3c3599fe456ba",
     "status": "degraded",

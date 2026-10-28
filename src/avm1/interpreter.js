@@ -781,7 +781,8 @@
       case 0x05: if (target) { target.gotoFrame(target.frame - 1); target.playing = false; } return true;
       case 0x06: if (target) target.playing = true; return true;
       case 0x07: if (target) target.playing = false; return true;
-      case 0x08: case 0x09: return true; // ToggleQuality, StopSounds: no effect yet
+      case 0x08: return true; // ToggleQuality: the renderer has one quality
+      case 0x09: M.audioOf(this.scheduler).stopAll(); return true; // StopSounds (stopAllSounds)
       case 0x81: // GotoFrame: go and stop, as Flash Player does
         if (!target) return true;
         if (action.error) return this.malformed();

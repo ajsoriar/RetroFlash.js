@@ -36,18 +36,20 @@
   /* The display context shared by every Clip of one movie: the dictionary, report(feature, reason, source),
      the limits (resolveLimits), `instances` (sprite and button instances created in the current step; the
      player resets it at each tick, seek and input event), `scripts`, the movie's ActionScheduler, and `loads`,
-     its LoadQueue (display/loader.js), and `host`, the HostBridge to the page (avm1/external.js). options:
-     { limits, actions, loader, maxFileBytes, host, dispatch } (actions: false queues no scripts; loader: the host
-     page's loader function; host: the Player option `host`; dispatch: the Player's cancelable events). */
+     its LoadQueue (display/loader.js), `host`, the HostBridge to the page (avm1/external.js), and `audio`, the
+     player's AudioController (audio/mixer.js). options: { limits, actions, loader, maxFileBytes, host, dispatch,
+     audio } (actions: false queues no scripts; loader: the host page's loader function; host: the Player option
+     `host`; dispatch: the Player's cancelable events; audio: an AudioController, by default a silent one). */
   function createEnv(movie, report, options) {
     options = options || {};
     var limits = options.limits || resolveLimits();
     var scripts = new ActionScheduler(movie.swf, report, limits, options.actions);
     scripts.host = new M.HostBridge(options.host, report, options.dispatch, options.interaction);
+    scripts.audio = options.audio || new M.AudioController(null, report, limits);
     return {
       characters: movie.characters, exports: movie.exports || Object.create(null), swf: movie.swf, version: movie.swf.version, url: '',
       report: report, limits: limits, instances: 0, instanceNames: 0, input: null, initActions: new Set(),
-      scripts: scripts, host: scripts.host,
+      scripts: scripts, host: scripts.host, audio: scripts.audio,
       loads: M.LoadQueue ? new M.LoadQueue(options.loader, report, limits, options.maxFileBytes, options.interaction) : null
     };
   }
@@ -106,8 +108,8 @@
     } else if (character.type === 'editText') {
       if (character.field.variableName) bindTextField(this, obj);
       if (!character.field.readOnly) env.report('text:input', 'Input text fields are drawn but cannot be edited yet.', characterId);
-    } else if (character.type === 'font') {
-      env.report('render:fontPlaced', 'A font is not a display object; the placement draws nothing.', characterId);
+    } else if (character.type === 'font' || character.type === 'sound') {
+      env.report('render:' + character.type + 'Placed', 'A ' + character.type + ' is not a display object; the placement draws nothing.', characterId);
     } else if (character.type === 'unsupported') {
       env.report('render:' + character.name, character.name + ' characters are placed but not drawn yet.', characterId);
     }
@@ -192,10 +194,12 @@
     if (obj !== existing) placed(env, obj);
   }
   Clip.prototype.frameCount = function () { return this.def.frames.length; };
-  Clip.prototype.gotoFrame = function (n) {
-    var count = this.def.frames.length, self = this, env = this.env;
+  /* Moves the playhead to frame `n`. `ticked` is true when the timeline plays into it (Clip.tick); other moves
+     are jumps, which matter to stream sounds. */
+  Clip.prototype.gotoFrame = function (n, ticked) {
+    var count = this.def.frames.length, self = this, env = this.env, from = this.frame;
     n = Math.max(1, Math.min(count, Math.floor(n)));
-    if (n === this.frame) return;
+    if (n === from) return;
     var make = function (id) { return self.createObject(id); };
     if (n > this.frame) {
       for (var k = this.frame + 1; k <= n; k++) {
@@ -225,6 +229,7 @@
       });
     }
     this.frame = n;
+    if (env.audio) env.audio.enterFrame(this, n, !!ticked || from === 0);
     this.queueFrameActions(n);
   };
   /* The scripts of the frame just entered run after the current tick, in queue order: first the DoInitAction
@@ -251,8 +256,8 @@
     this.env.scripts.clipEvent(this, 'enterFrame');
     var count = this.def.frames.length;
     if (!this.playing || count < 2) return false;
-    if (this.frame < count) { this.gotoFrame(this.frame + 1); return false; }
-    if (this.loop) this.gotoFrame(1);
+    if (this.frame < count) { this.gotoFrame(this.frame + 1, true); return false; }
+    if (this.loop) this.gotoFrame(1, true);
     return true;
   };
   Clip.prototype.depths = function () {
@@ -351,6 +356,7 @@
   };
   // Shows a loaded movie: its root timeline from frame 1, with its own dictionary, then the clip's load event.
   Clip.prototype.showMovie = function (movie, url) {
+    if (this.env.audio) this.env.audio.prepare(movie);
     this.showContent(createMovieEnv(this.env, movie, url), movie.root, { movie: movie });
   };
   // Shows a loaded image ({ source, width, height, reserved }) at the clip's origin, at one twip per 1/20 pixel.

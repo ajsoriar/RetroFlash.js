@@ -548,6 +548,70 @@
     };
   }
 
+  /* Sounds (SWF19 "Sounds"). Sample data stays in the tag body: offsets are relative to getTagData(tag).
+     SoundRate codes 0-3 are 5512.5, 11025, 22050 and 44100 Hz; Nellymoser 8 and 16 kHz (formats 5 and 4) and
+     Speex (11, always 16 kHz) ignore the code. Compressed formats always decode to 16-bit samples. */
+  var SOUND_RATES = [5512.5, 11025, 22050, 44100];
+  function soundRate(format, code) { return format === 5 ? 8000 : format === 4 || format === 11 ? 16000 : SOUND_RATES[code]; }
+  function readSoundFormat(r, f, label) {
+    f.format = r.readUB(4, label + '.SoundFormat');
+    f.rate = soundRate(f.format, r.readUB(2, label + '.SoundRate'));
+    f.is16Bit = r.readUB(1, label + '.SoundSize') === 1;
+    f.stereo = r.readUB(1, label + '.SoundType') === 1;
+  }
+  // DefineSound: SoundData starts at `dataStart`; MP3 data begins with SeekSamples (SI16), kept as seekSamples.
+  function defineSoundDecoder(r) {
+    var start = r.start, f = { soundId: r.readUI16('DefineSound.SoundId') };
+    readSoundFormat(r, f, 'DefineSound');
+    f.sampleCount = r.readUI32('DefineSound.SoundSampleCount');
+    if (f.format === 2) f.seekSamples = r.readSI16('DefineSound.SeekSamples');
+    f.dataStart = r.byteOffset() - start;
+    r.skipRemaining();
+    return f;
+  }
+  /* SOUNDINFO: syncStop, syncNoMultiple, and when present inPoint and outPoint (samples at 44.1 kHz), loopCount
+     and envelope ([{ pos44, left, right }], levels 0-32768). */
+  function readSoundInfo(r, label) {
+    var flags = r.readUI8(label + '.SoundInfo'), info = { syncStop: !!(flags & 0x20), syncNoMultiple: !!(flags & 0x10) };
+    if (flags & 0x01) info.inPoint = r.readUI32(label + '.InPoint');
+    if (flags & 0x02) info.outPoint = r.readUI32(label + '.OutPoint');
+    if (flags & 0x04) info.loopCount = r.readUI16(label + '.LoopCount');
+    if (flags & 0x08) {
+      var count = r.readUI8(label + '.EnvPoints');
+      info.envelope = [];
+      for (var i = 0; i < count; i++) {
+        info.envelope.push({ pos44: r.readUI32(label + '.Pos44'), left: r.readUI16(label + '.LeftLevel'), right: r.readUI16(label + '.RightLevel') });
+      }
+    }
+    return info;
+  }
+  // DefineButtonSound: one sound per state change, in tag order; `null` where the character id is 0.
+  var BUTTON_SOUND_NAMES = ['overUpToIdle', 'idleToOverUp', 'overUpToOverDown', 'overDownToOverUp'];
+  function buttonSoundDecoder(r) {
+    var f = { buttonId: r.readUI16('DefineButtonSound.ButtonId'), sounds: [] };
+    BUTTON_SOUND_NAMES.forEach(function (name) {
+      var id = r.readUI16('DefineButtonSound.' + name);
+      f.sounds.push(id ? { soundId: id, info: readSoundInfo(r, 'DefineButtonSound.' + name) } : null);
+    });
+    return f;
+  }
+  /* SoundStreamHead and SoundStreamHead2: the advised playback rate, size and type, then the stream format and
+     sampleCount (average samples per frame). MP3 streams add LatencySeek, which some tools leave out. */
+  function streamHeadDecoder(label) {
+    return function (r) {
+      r.readUB(4, label + '.Reserved');
+      var f = {
+        playbackRate: SOUND_RATES[r.readUB(2, label + '.PlaybackSoundRate')],
+        playback16Bit: r.readUB(1, label + '.PlaybackSoundSize') === 1,
+        playbackStereo: r.readUB(1, label + '.PlaybackSoundType') === 1
+      };
+      readSoundFormat(r, f, label + '.Stream');
+      f.sampleCount = r.readUI16(label + '.StreamSoundSampleCount');
+      if (f.format === 2 && r.remainingBytes() >= 2) f.latencySeek = r.readSI16(label + '.LatencySeek');
+      return f;
+    };
+  }
+
   /* Fonts. Each glyph is a SHAPE without style arrays: NumFillBits/NumLineBits, then SHAPERECORDs whose fill
      style 1 is the text colour. Coordinates are on an EM square of 1024 units (DefineFont3: 20480).
      Glyphs are { records, code, advance[, bounds] }; codes come from the font's code table (DefineFont2/3) or
@@ -803,7 +867,14 @@
       while (r.remainingBytes() > 0) f.colorTransforms.push(r.readCxform());
       return f;
     },
-    17: function (r) { var f = { buttonId: r.readUI16('DefineButtonSound.ButtonId') }; r.skipRemaining(); return f; },
+    17: buttonSoundDecoder,
+    14: defineSoundDecoder,
+    15: function (r) { return { soundId: r.readUI16('StartSound.SoundId'), info: readSoundInfo(r, 'StartSound') }; },
+    89: function (r, ctx) { return { className: r.readString(ctx.version, 'StartSound2.SoundClassName'), info: readSoundInfo(r, 'StartSound2') }; },
+    18: streamHeadDecoder('SoundStreamHead'),
+    45: streamHeadDecoder('SoundStreamHead2'),
+    // SoundStreamBlock: the samples of one frame, whose layout depends on the timeline's SoundStreamHead.
+    19: function (r) { r.skipRemaining(); return {}; },
     10: defineFontDecoder,
     48: fontDecoder(2),
     75: fontDecoder(3),

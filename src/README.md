@@ -84,8 +84,14 @@ Values follow the SWF specification:
 - Buttons (since v0.4, with `tests/fixtures/valid/fws-buttons.swf`):
   - `DefineButton` and `DefineButton2` give `buttonId`, `buttonVersion`, `trackAsMenu`, and `records`. Each record has its `up`/`over`/`down`/`hitTest` flags, `characterId`, `depth`, `matrix`, and, in v2, `colorTransform`, `filters`, and `blendMode`.
   - They also give `actions`: `{ conditions, start, end }` relative to `getTagData(tag)`. `conditions` uses the BUTTONCONDACTION bits read as a little-endian UI16, with the key code in bits 9–15. A `DefineButton` has one list, run on release (`conditions` 8). `DefineButton2.ActionOffset` locates the actions. A gap after the records is skipped and reported as `BUTTON_ACTION_OFFSET_GAP`; an offset inside the records or past the tag makes the tag invalid.
-  - `DefineButtonCxform` gives `buttonId` and every `CXFORM` it holds. `DefineButtonSound` gives `buttonId` only.
+  - `DefineButtonCxform` gives `buttonId` and every `CXFORM` it holds. `DefineButtonSound` gives `buttonId` and `sounds` (see below).
   - `movie.codeTags.buttonActions` counts the action lists.
+- Sounds (with `tests/fixtures/valid/fws-sound.swf`). Sample data stays in the tag body; offsets are relative to `getTagData(tag)`. `rate` is in Hz: 5512.5, 11025, 22050 or 44100, except Nellymoser 8 kHz (8000), Nellymoser 16 kHz and Speex (16000).
+  - `DefineSound` gives `soundId`, `format` (0 and 3 PCM, 1 ADPCM, 2 MP3, 4–6 Nellymoser, 11 Speex), `rate`, `is16Bit`, `stereo`, `sampleCount`, `dataStart`, and for MP3 `seekSamples`.
+  - `StartSound` gives `soundId` and `info`; `StartSound2` gives `className` and `info`. A `SOUNDINFO` (`info`) has `syncStop`, `syncNoMultiple`, and when present `inPoint`, `outPoint` (samples at 44.1 kHz), `loopCount`, and `envelope` (`[{ pos44, left, right }]`, levels 0–32768).
+  - `DefineButtonSound` gives `buttonId` and `sounds`: four entries (OverUpToIdle, IdleToOverUp, OverUpToOverDown, OverDownToOverUp), each `null` or `{ soundId, info }`.
+  - `SoundStreamHead` and `SoundStreamHead2` give the advised `playbackRate`, `playback16Bit`, and `playbackStereo`, then the stream's `format`, `rate`, `is16Bit`, `stereo`, `sampleCount` (per frame), and for MP3 `latencySeek`, which may be missing.
+  - `SoundStreamBlock` is marked as decoded; its layout depends on its timeline's `SoundStreamHead`, so the player reads it.
 - Fonts and text (since v0.5, with `tests/fixtures/valid/fws-text.swf`):
   - `DefineFont2` and `DefineFont3` give:
     - `fontId`, `fontVersion`, `name` (a trailing NUL is dropped), `bold`, `italic`, `smallText`, `ansi`, `shiftJIS`, `language`, and `hasLayout`;
@@ -110,7 +116,7 @@ Values follow the SWF specification:
 ## Limitations
 
 - The reader itself does not render. Playback is handled by `retroflash.js` (see below).
-- Sounds, video, morph shapes, and `DefineFont4` are indexed but not decoded. Bitmap pixels are decoded by the player.
+- Video, morph shapes, and `DefineFont4` are indexed but not decoded. Bitmap pixels and sound samples are decoded by the player.
 - Not parsed yet: `PlaceObject2`/`PlaceObject3` clip actions. Filter parameters are skipped, not decoded.
 - `ZWS` (LZMA) is rejected. `CWS` needs native `DecompressionStream`; there is no JavaScript inflate fallback yet, so CWS fails with `CWS_UNSUPPORTED` in older browsers.
 - Strings in files older than SWF 6 used the author's locale encoding, which the file does not record; they are decoded as Latin-1.
@@ -133,6 +139,8 @@ const player = new RetroFlash.Player({
   input: true,                      // pointer and keyboard on the canvas drive the movie's buttons
   loader: null,                     // gives the files that scripts load (see "Loading into clips")
   host: null,                       // what the movie asks of the page (see "Browser interaction")
+  audio: undefined,                 // the audio backend; false plays no sound (see "Sound")
+  volume: 1,                        // from 0 to 1
   maxActionSteps: 100000            // any of the limits below
 });
 await player.load(fileOrBuffer, { url, variables }); // options optional: the movie's _url and its FlashVars;
@@ -146,7 +154,9 @@ player.on('load' | 'frame' | 'warning' | 'error' | 'end', fn); player.off(type, 
 player.on('navigate' | 'call' | 'fscommand' | 'callbacks' | 'interaction', fn); // see "Browser interaction"
 player.callback(name, args); player.getCallbacks(); // ExternalInterface.addCallback functions
 player.getInteractionLog(); player.clearInteractionLog(); // recent page/plugin requests, bounded to 100 entries
+player.setVolume(0.5); player.getVolume();
 RetroFlash.createBrowserHost(options); // a `host` that uses the browser's own APIs
+RetroFlash.createWebAudioBackend(options); // an `audio` backend on Web Audio (the default in browsers)
 player.destroy();
 player.limits;            // the limits in force, frozen
 ```
@@ -161,6 +171,7 @@ Budgets against hostile or runaway files. Each limit is a Player option with the
 | `maxInstances` | 100,000 | Sprite and button instances created in one step: a tick, a seek, or an input event | `render:instanceLimit` |
 | `maxBitmapPixels` | 4096 × 4096 | Pixels of one bitmap | `render:bitmapDecodeFailed` (`BITMAP_TOO_LARGE`) |
 | `maxTotalBitmapPixels` | 4 × 4096 × 4096 | Pixels of all bitmaps of a movie together | `render:bitmapDecodeFailed` (`BITMAP_BUDGET`) |
+| `maxAudioSamples` | 64 × 1024 × 1024 | Decoded sound samples of a movie together (all channels; MP3 counted by its declared length) | `sound:memoryLimit` |
 | `maxActionBlocks` | 10,000 | AVM1 action blocks (each `DoAction` or button action list) run in one tick or input event; the rest are dropped | `avm1:budget` |
 | `maxActionSteps` | 100,000 | AVM1 actions executed in one tick or input event; the current block stops | `avm1:budget` |
 | `maxActionStack` | 100,000 | Values on the stack of one AVM1 action block or function call; the block stops | `avm1:budget` |
@@ -182,6 +193,7 @@ Each player module is a classic script. It takes what it needs from the internal
 | `avm1/values.js`, `avm1/properties.js`, `avm1/variables.js` | AVM1 values with their conversions and comparisons; movie clip properties, bounds, and paths; target paths, timeline variables, and text fields bound to a variable |
 | `avm1/objects.js`, `avm1/globals.js` | AVM1 objects, arrays, functions, and member access; the movie's runtime with the global object and the built-in classes |
 | `avm1/interpreter.js` | `ActionScheduler`, with one `Activation` per block or call, which runs AVM1 bytecode |
+| `audio/codecs.js`, `audio/mixer.js` | PCM and ADPCM decoding and MP3 frame headers; the `AudioController`: event sounds, streams, sound transforms, and the backend contract |
 | `display/movie.js` | The character dictionary and frame lists |
 | `display/clip.js`, `display/button.js` | The display context (`createEnv`), timelines and display lists, and button instances |
 | `display/loader.js` | `LoadQueue`: movies, images, and variables loaded into clips through the host page's loader |
@@ -189,17 +201,20 @@ Each player module is a classic script. It takes what it needs from the internal
 | `render/canvas-renderer.js` | The Canvas 2D renderer |
 | `avm1/external.js` | getURL to windows, `javascript:` URLs read as page calls, FSCommand, form variables, ExternalInterface values, the `HostBridge` |
 | `browser/host.js` | `RetroFlash.createBrowserHost` |
+| `browser/web-audio.js` | `RetroFlash.createWebAudioBackend` |
 | `retroflash.js` | `RetroFlash.Player`, the public API |
 | `browser/legacy-autoplay.js` | Replaces legacy Flash `<object>`/`<embed>` markup; the only script after `retroflash.js` |
 
-A module uses only modules listed before it in `modules.json`. The exceptions read from the namespace at run time: `display/clip.js` reads `ButtonInstance` when it creates a button, because buttons are built on clips, and `LoadQueue` when it creates a display context; `avm1/interpreter.js` and `avm1/globals.js` read `loadInto` when a script loads something.
+A module uses only modules listed before it in `modules.json`. The exceptions read from the namespace at run time: `display/clip.js` reads `ButtonInstance` when it creates a button, because buttons are built on clips, and `LoadQueue` when it creates a display context; `avm1/interpreter.js` and `avm1/globals.js` read `loadInto` when a script loads something, and `audioOf` when a script plays or stops a sound.
 
 The state of one movie is split in two:
 
 - The **display context** (`createEnv`) is shared by every timeline. It holds the dictionary, the report function, the limits, and the per-step instance count. A movie loaded into a clip gets its own context (`createMovieEnv`) with its own dictionary, exports, SWF version, and URL; the rest is the main movie's.
 - The **`ActionScheduler`** (`env.scripts`) queues and runs AVM1 action blocks. It holds the queue, the parsed-action cache, and the budgets. The player opens a new budget for each tick and input event (`scripts.beginUpdate()`), and every `run()` in that update shares it. It drives timelines only through `Clip` methods, so AVM1 does not depend on the display list's internals.
 
-A scrubbing `seek` and the creation of a button's hit area enter frames without running their scripts: the scripts they queue are dropped, with `scripts.mark()` and `scripts.dropSince(mark)`.
+A scrubbing `seek` and the creation of a button's hit area enter frames without running their scripts: the scripts they queue are dropped, with `scripts.mark()` and `scripts.dropSince(mark)`. They play no sounds either (`audio.quiet`).
+
+The **`AudioController`** (`env.audio`, in `audio/mixer.js`) belongs to the player and is shared by every movie it shows. It decodes and caches sound samples, tracks the sounds playing, and sends them to the audio backend.
 
 ### Behaviour
 
@@ -223,6 +238,7 @@ A scrubbing `seek` and the creation of a button's hit area enter frames without 
   - **Memory limits:** pixels are reserved before decoding. Lossless bitmaps use the tag's width and height. JPEG, PNG, and GIF use the size in the image header (JPEG `SOFn`, PNG `IHDR`, GIF logical screen); an image without a readable size is refused, and a decoded image larger than its header declared is discarded. Each bitmap is limited by `maxBitmapPixels`, and all bitmaps of a movie together by `maxTotalBitmapPixels`, in character id order. A refused bitmap is reported (`render:bitmapDecodeFailed`, with `BITMAP_TOO_LARGE`, `BITMAP_BUDGET`, or `BITMAP_FORMAT`) and not drawn.
   - Bitmap memory is released when the movie is replaced by another `load()` or the player is destroyed.
 - **Loading into clips:** see [Loading into clips](#loading-into-clips).
+- **Sound:** see [Sound](#sound).
 - **Overlapping loads:** only the latest `load()` takes effect. An earlier call that is still running, or one interrupted by `destroy()`, resolves to `null` without changing the player or emitting events, even if it fails. Diagnostics it would produce after that point, such as bitmap decoding failures, are dropped.
 - **Shapes:**
   - Edges are grouped by fill style, with FillStyle0 edges reversed, and linked into closed contours.
@@ -257,7 +273,8 @@ A scrubbing `seek` and the creation of a button's hit area enter frames without 
 - **Buttons:** `DefineButton` and `DefineButton2`:
   - Each instance shows the records of its current state. Children that keep their depth and character persist across state changes.
   - Sprites inside a button keep playing.
-  - The hit area (`HIT_TEST` records) is never drawn, and sprites in it do not run frame scripts.
+  - The hit area (`HIT_TEST` records) is never drawn, and sprites in it do not run frame scripts or play sounds.
+  - `DefineButtonSound` sounds play on roll over (`IdleToOverUp`), press (`OverUpToOverDown`), release (`OverDownToOverUp`), and roll out or release outside (`OverUpToIdle`), with their `SOUNDINFO`.
 - **Input:** with the default `input: true`, the player listens to pointer and keyboard events on the canvas.
   - The hovered button is the topmost one whose hit area contains the pointer. Hit testing uses the even-odd (or non-zero) fill rule, curves, and strokes at least 1 px wide. As in AVM1, shapes and bitmaps above a button never block it.
   - Pointer changes become button events:
@@ -276,6 +293,44 @@ A scrubbing `seek` and the creation of a button's hit area enter frames without 
   - Button actions run through the same AVM1 subset, in the context of the button's parent timeline, right after the event; then the movie is redrawn.
   - Buttons that leave the stage are forgotten without events. A button that appears under a still pointer gets its roll-over after the next frame.
   - The cursor becomes a hand over buttons.
+
+### Sound
+
+Sounds play through an **audio backend**, the Player option `audio`. By default the player uses `RetroFlash.createWebAudioBackend()` when the browser has Web Audio. With `audio: false`, or without Web Audio (Node), nothing plays, and a movie that starts a sound reports `sound:noOutput`.
+
+Browsers start audio only after the user interacts with the page. Until then sounds are silent; the Web Audio backend resumes at the first pointer or key press on the page. `pause()` suspends every sound and `play()` resumes them. `stop()` and `load()` stop them, and `destroy()` closes the output. `volume` (and `setVolume`) scales everything.
+
+- **Codecs:** uncompressed PCM (8-bit unsigned or 16-bit little-endian, mono or stereo) and ADPCM (2 to 5 bits per code) are decoded in JavaScript. MP3 is decoded by the browser (`decodeAudioData`); a movie's MP3 sounds and streams are decoded ahead during `load`. Nellymoser and Speex are reported (`sound:Nellymoser`, `sound:Speex`, ...) and not played. Decoded samples count against `maxAudioSamples`.
+- **Event sounds:** a `StartSound` plays when its frame is entered; a `goto` plays only the sounds of the frame it lands on. `SOUNDINFO` is honoured:
+  - in and out points, and envelope positions, in 44.1 kHz samples;
+  - the loop count (below 1 plays once);
+  - the envelope's left and right levels, linear between points, counted from the start of playback across loops;
+  - `syncStop` stops every instance of the sound, and `syncNoMultiple` does not start it while it plays.
+
+  MP3 sounds skip their `SeekSamples`. A timeline's sound belongs to its clip, but removing the clip does not stop it.
+- **Stream sounds** (`SoundStreamHead`, `SoundStreamBlock`): the blocks of a timeline make one sound, which plays while its timeline plays.
+  - A timeline that plays into a frame with a block starts the stream from that block.
+  - A stream more than one second away from its timeline starts again where the timeline is.
+  - A jump (`gotoAndPlay`, `nextFrame`, ...), `stop()`, removal, or new content stops it. It starts again when the playing timeline reaches its next block.
+  - The timeline is not slowed down or sped up to follow the audio.
+  - ADPCM blocks do not record their sample count, so padding bits that hold a whole code add one sample to a block.
+- **At most 32 sounds** play at once, streams included; further ones are reported (`sound:limit`).
+- **`StopSounds`** (`stopAllSounds()`) stops every sound. Streams of timelines that keep playing start again at their next block.
+- **Reported:** a sound id that is not a sound (`sound:missingCharacter`), `StartSound2` (`sound:StartSound2`, an ActionScript 3 class), a stream without a head (`sound:streamWithoutHead`), and data the browser cannot decode (`sound:decodeFailed`).
+
+**The backend contract.** A custom `audio` object needs `play(media, options)`, which starts a sound and returns a voice, or `null`.
+
+- `media` is decoded samples, `{ rate, channels: [Float32Array] }`, or MP3 frames to decode, `{ rate, stereo, mp3: Uint8Array }`. The same object comes back for the same sound, so it can serve as a cache key.
+- `options` is `{ start, end, loops, envelope, gains, sync, onended, onerror }`:
+  - `start` and `end` are seconds in the media, and `loops` is 1 or more;
+  - `envelope` is `null` or `[{ time, left, right }]`, with `time` in seconds from the start of playback and levels from 0 to 1;
+  - `gains` is `[ll, lr, rl, rr]`: left from left, left from right, right from left, and right from right;
+  - `sync` is true for streams, whose late start should skip what it missed;
+  - `onended()` is called once, when the sound finishes by itself, and `onerror(error)` when it cannot be decoded.
+- A voice has `stop()`, `setGains(gains)`, and `position()` (seconds in the media, or `null` before it starts).
+- Optional methods: `prepare(media)` (decode ahead; may return a promise), `suspend()`, `resume()`, `setVolume(value)`, and `close()`.
+
+`RetroFlash.createWebAudioBackend({ context, window })` plays into its own `AudioContext`, created with the first sound, or into `context`, which it never closes. Each voice is a buffer source split into left and right, scaled by the envelope and the four channel gains, and merged into the master volume. Buffers below 8 kHz are upsampled, because some browsers refuse such rates. It returns `null` when the window has no Web Audio.
 
 ### AVM1 (frame scripts and button actions)
 
@@ -302,7 +357,7 @@ The player runs the `DoAction` scripts of each frame it enters (root and sprites
 
 **The page** (see [Browser interaction](#browser-interaction)): `GetURL`/`GetURL2` to a window (with the variables of a `GET` or `POST`), `javascript:` and `FSCommand:` URLs.
 
-**Ignored, but reported:** `ToggleQuality`, `StopSounds`.
+**Sound:** `StopSounds` stops every sound (see [Sound](#sound)). `ToggleQuality` is ignored.
 
 **Unknown action codes** are reported as `avm1:Unknown_0x..` and skipped, as Flash Player skips them.
 
@@ -451,7 +506,17 @@ Events, timers, and listeners are queued with the frame scripts and share their 
 
 **MovieClip methods:** `hitTest(x, y, shapeFlag)` (a point in `_root` coordinates, against the shapes or the bounds), `hitTest(target)` (overlapping bounds), `getBounds(space)` (an empty clip gives 6710886.35 on every side, as in Flash Player), `localToGlobal`, `globalToLocal`, `attachMovie(name, instanceName, depth, initObject)` (by `ExportAssets` name; the init object's properties are copied), `createEmptyMovieClip`, `swapDepths(depth or clip)` (both clips are then managed by scripts), `getNextHighestDepth`, `getInstanceAtDepth`, `getSWFVersion`, `startDrag`, `stopDrag`.
 
-**Other objects:** `Stage` (`width`, `height`, `scaleMode`, `align`, `showMenu`; no resize events), `Color` (`setRGB`, `getRGB`, `setTransform`, `getTransform` on a clip's colour transform), and `Sound`, which is accepted and silent (reported once as `sound:Sound`).
+**Other objects:** `Stage` (`width`, `height`, `scaleMode`, `align`, `showMenu`; no resize events), `Color` (`setRGB`, `getRGB`, `setTransform`, `getTransform` on a clip's colour transform), and `Sound` (see below).
+
+**`Sound`** plays library sounds and MP3 files through the player's audio (see [Sound](#sound)):
+
+- `new Sound(clip)` controls the sounds of that clip, and `new Sound()` controls every sound. A `Sound` whose clip left the stage does nothing.
+- Volume, pan, and transform belong to the clip, shared by every `Sound` of that clip, or, without a clip, to every sound. A sound is scaled by the transforms of the clip that owns it and of that clip's parents, then by the global one.
+- `attachSound(name)` takes a sound exported with `ExportAssets` by the movie of the clip, or of the root. A name that matches no sound is reported (`sound:attachMissing`).
+- `start(secondOffset, loops)` plays a new instance. `stop()` stops the clip's sounds (every sound, without a clip), and `stop(name)` stops every instance of that sound.
+- `setVolume` and `getVolume` (percent), `setPan` and `getPan` (−100, left only, to 100, right only: the other side is turned down), and `setTransform` and `getTransform` (`{ ll, lr, rr, rl }` in percent).
+- `duration` and `position` are in milliseconds; `position` is updated every frame. `onSoundComplete` is called when a sound the object started finishes.
+- `loadSound(url, isStreaming)` loads an MP3 file through the host page's loader (request type `'sound'`), then calls `onLoad(success)`. A streaming sound starts as soon as it has arrived and plays one instance at a time. `getBytesLoaded` and `getBytesTotal` give the file's size once it is loaded. ID3 tags are skipped, not read.
 
 **`DoInitAction`** scripts run once per movie, the first time their frame is entered, before that frame's `DoAction` scripts, on the root timeline.
 
@@ -463,7 +528,7 @@ The `Player` API does not fetch files itself. A script that loads a movie, an im
 const files = new Map([['visor.swf', visorFile], ['img1.jpg', photoFile]]); // Files or Uint8Arrays
 const player = new RetroFlash.Player({
   canvas,
-  // request: { url, type: 'movie' | 'variables', method: null | 'GET' | 'POST' }
+  // request: { url, type: 'movie' | 'variables' | 'sound', method: null | 'GET' | 'POST' }
   loader: (request) => files.get(request.url.split('/').pop()) || null
 });
 ```
@@ -473,6 +538,7 @@ const player = new RetroFlash.Player({
 - **Targets:** `GetURL2` with its load-into-clip flag names the clip by a target path or a clip value, from the script's target; the MovieClip methods `loadMovie(url, method)`, `unloadMovie()`, and `loadVariables(url, method)` load into their clip; `_level0` is the root. Other levels are not supported (`load:level`).
 - **Movies:** a movie load empties the clip at once: its children leave with their `unload` events, the clip gets its own `unload`, and its variables and methods are cleared. It keeps its name, depth, transform, and clip events. When the file arrives, the clip plays the loaded movie's root timeline from frame 1 and gets `load`. The loaded movie keeps its own dictionary and SWF version: its scripts follow its version's rules (the built-in objects follow the main movie's), `getSWFVersion()` and `_url` report it, and its `_root` is the main movie's root. A failed load leaves the clip empty.
 - **Images:** a JPEG, PNG, or GIF file is shown at the clip's origin, one pixel per 20 twips. Its pixels come from a budget shared by everything loaded at once (`maxBitmapPixels` per image, `maxTotalBitmapPixels` in all); a movie's bitmaps take from the same budget. Unloading or replacing the content gives them back.
+- **Sounds:** `Sound.loadSound` asks for an MP3 file (request type `'sound'`); see [Sound](#sound) for what follows. A file without MP3 frames is reported (`load:failed`).
 - **Variables:** the text is read as URL-encoded `name=value` pairs (UTF-8 from SWF 6, Latin-1 before; `+` is a space) and set on the clip as strings; then the clip gets `data`.
 - **Timing:** what arrives is shown between frames, after the tick's scripts, or at once when the movie is not playing. A newer movie load into the same clip, or an unload, cancels an older one. At most 8 loads wait for the loader at once; more are dropped (`load:limit`). A file that is not a SWF, JPEG, PNG, or GIF, or that cannot be read, is reported (`load:failed`).
 - **Cleanup:** `stop()`, `load()`, and `destroy()` free loaded content, and drop loads that finish later.
@@ -602,13 +668,14 @@ Each of these is reported in `getDiagnostics().unsupported` when it is met:
 - `javascript:` URLs that are not calls with literal arguments (`browser:javascriptUnsupported`); they are never evaluated;
 - characters that are placed but not drawn: morph shapes, video, `DefineFont4` text;
 - editing input fields (`text:input`), selection, scrolling, HTML images, kerning and letter spacing, style sheets, and text fields used as masks;
-- button sounds (`DefineButtonSound`), menu tracking (`trackAsMenu` buttons behave as push buttons), masks during hit testing, and buttons nested inside buttons;
+- menu tracking (`trackAsMenu` buttons behave as push buttons), masks during hit testing, and buttons nested inside buttons;
+- Nellymoser and Speex sound, `StartSound2`, `Sound.id3`, and slowing or speeding up a timeline to follow its stream sound;
 - per-channel colour transforms on bitmaps (only the alpha multiplier is applied);
 - clipped bitmap fills beyond the bitmap's edges (Flash repeats the edge pixels there; the player leaves them empty);
 - gradient spread modes other than pad, and linear-RGB interpolation;
 - gradient and bitmap line fills (drawn with their first colour);
 - blend modes, filters, and non-scaling strokes;
-- 9-slice scaling and sound.
+- 9-slice scaling.
 
 Two parts are only checked by eye, through the demo:
 
@@ -618,5 +685,4 @@ Two parts are only checked by eye, through the demo:
 ## Next steps
 
 1. Grow the compatibility corpus (`tools/corpus.js`, see `tests/COMPATIBILITY.md`) with authorized SWF files, and fix what it finds.
-2. Sound.
-3. Morph shapes and filters.
+2. Morph shapes and filters.

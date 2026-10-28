@@ -10,20 +10,35 @@
   var BITMAP_CODES = { 6: 1, 20: 1, 21: 1, 35: 1, 36: 1, 90: 1 };
   var FONT_CODES = { 10: 1, 48: 1, 75: 1 };
   // Other definition tags whose body starts with the new character id (UI16); placed but not drawn yet.
-  var CHARACTER_TAGS = { 14: 1, 46: 1, 60: 1, 84: 1, 87: 1, 91: 1 };
+  var CHARACTER_TAGS = { 46: 1, 60: 1, 84: 1, 87: 1, 91: 1 };
 
-  // Frame k (1-based) = the control tags between ShowFrame k-1 and ShowFrame k. Tags after the last ShowFrame are ignored.
-  function buildTimeline(tags) {
-    var frames = [], current = [], labels = Object.create(null);
+  /* Frame k (1-based) = the control tags between ShowFrame k-1 and ShowFrame k. Tags after the last ShowFrame are
+     ignored. A timeline with a stream sound also gets `stream`: { head (the first SoundStreamHead's fields),
+     blocks: [{ frame, tag }] (SoundStreamBlock tags), name }; the Movie adds the SWF its blocks come from. */
+  function buildTimeline(tags, name) {
+    var frames = [], current = [], labels = Object.create(null), stream = null;
     for (var i = 0; i < tags.length; i++) {
       var tag = tags[i];
       if (tag.code === 0) break;
       if (tag.code === 1) { frames.push(current); current = []; continue; }
       if (tag.code === 43 && tag.fields && !(tag.fields.name in labels)) labels[tag.fields.name] = frames.length + 1;
+      if (tag.code === 18 || tag.code === 45 || tag.code === 19) {
+        stream = stream || { head: null, blocks: [], name: name || 'root', swf: null };
+        if (tag.code === 19) stream.blocks.push({ frame: frames.length + 1, tag: tag });
+        else if (!stream.head && tag.fields) stream.head = tag.fields;
+      }
       current.push(tag);
     }
     if (!frames.length) frames.push(current);
-    return { frames: frames, labels: labels };
+    return { frames: frames, labels: labels, stream: stream && stream.blocks.length ? stream : null };
+  }
+  // Sound character (DefineSound): its format, and where its samples are (sound data starts at dataStart).
+  function soundCharacter(swf, tag) {
+    var f = tag.fields;
+    return {
+      type: 'sound', id: f.soundId, name: tag.name, format: f.format, rate: f.rate, is16Bit: f.is16Bit, stereo: f.stereo,
+      sampleCount: f.sampleCount, seekSamples: f.seekSamples || 0, swf: swf, tag: tag, dataStart: f.dataStart
+    };
   }
 
   // Button character: records with Canvas matrices/colour transforms, and action lists as runnable blocks.
@@ -44,7 +59,7 @@
   }
 
   function Movie(swf) {
-    var characters = Object.create(null), exports = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = [], fontInfos = [];
+    var characters = Object.create(null), exports = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = Object.create(null), fontInfos = [];
     // A definition whose body could not be decoded still defines its id (first UI16), so placements report
     // it as an invalid character rather than a missing one.
     function invalidCharacter(tag) {
@@ -52,6 +67,8 @@
       var data = swf.getTagData(tag), id = data[0] | (data[1] << 8);
       characters[id] = { type: 'unsupported', id: id, name: tag.name + ' (invalid)' };
     }
+    // Stream blocks are read from this movie's SWF.
+    function withSwf(stream) { if (stream) stream.swf = swf; return stream; }
     swf.tags.forEach(function (tag) {
       var f = tag.fields, decoded = f && tag.status === 'decoded';
       if (SHAPE_CODES[tag.code]) {
@@ -77,14 +94,17 @@
       } else if (tag.code === 23) {
         if (f) buttonColors[f.buttonId] = f.colorTransforms;
       } else if (tag.code === 17) {
-        if (f) buttonSounds.push(f.buttonId);
+        if (decoded) buttonSounds[f.buttonId] = f.sounds;
+      } else if (tag.code === 14) {
+        if (decoded) characters[f.soundId] = soundCharacter(swf, tag);
+        else invalidCharacter(tag);
       } else if (tag.code === 56) {
         if (f) f.assets.forEach(function (a) { if (!(a.name in exports)) exports[a.name] = a.characterId; });
       } else if (tag.code === 8) {
         if (!jpegTables && tag.length) jpegTables = swf.getTagData(tag);
       } else if (tag.code === 39 && tag.children && tag.status !== 'invalid') {
-        var timeline = buildTimeline(tag.children);
-        characters[tag.spriteId] = { type: 'sprite', id: tag.spriteId, name: tag.name, frames: timeline.frames, labels: timeline.labels };
+        var timeline = buildTimeline(tag.children, 'sprite ' + tag.spriteId);
+        characters[tag.spriteId] = { type: 'sprite', id: tag.spriteId, name: tag.name, frames: timeline.frames, labels: timeline.labels, stream: withSwf(timeline.stream) };
       } else if (CHARACTER_TAGS[tag.code] && tag.length >= 2) {
         var data = swf.getTagData(tag), id = data[0] | (data[1] << 8);
         characters[id] = { type: 'unsupported', id: id, name: tag.name };
@@ -95,6 +115,11 @@
       var button = characters[id];
       if (!button || button.type !== 'button') return;
       buttonColors[id].forEach(function (cx, i) { if (button.records[i]) button.records[i].cx = toColorTransform(cx); });
+    });
+    // DefineButtonSound gives a button the sounds of its state changes.
+    Object.keys(buttonSounds).forEach(function (id) {
+      var button = characters[id];
+      if (button && button.type === 'button') button.sounds = buttonSounds[id];
     });
     // DefineFontInfo gives a DefineFont its name, style and the character code of each glyph.
     fontInfos.forEach(function (info) {
@@ -111,8 +136,7 @@
     this.characters = characters;
     this.exports = exports; // ExportAssets: linkage name -> character id (attachMovie)
     this.jpegTables = jpegTables;
-    this.buttonSounds = buttonSounds;
-    this.root = { type: 'sprite', id: 0, name: 'root', frames: root.frames, labels: root.labels };
+    this.root = { type: 'sprite', id: 0, name: 'root', frames: root.frames, labels: root.labels, stream: withSwf(root.stream) };
   }
   /* Browser only. Decodes every bitmap character, at most BITMAP_DECODE_CONCURRENCY at a time to bound the
      memory held by inflated buffers; failures are reported and leave the bitmap undrawn. Bitmaps are taken in

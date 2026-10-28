@@ -13,6 +13,7 @@ const { buildButtons } = require('./buttons');
 const { buildText } = require('./text');
 const { buildGame } = require('./game');
 const { buildBrowser } = require('./browser');
+const { buildSound } = require('./sound');
 
 const fileAttributes = (raw = 0) => tag(T.FileAttributes, body((w) => w.u32(raw)));
 const background = (r, g, b) => tag(T.SetBackgroundColor, body((w) => w.rgb({ r, g, b })));
@@ -218,6 +219,17 @@ const fixtures = [
     build: buildText,
     expect: {
       signature: 'FWS', version: 10, width: 400, height: 300, fps: 12, frameCount: 1, actualFrameCount: 1, tags: 22,
+      diagnostics: [], unsupported: []
+    }
+  },
+  {
+    file: 'valid/fws-sound.swf',
+    description: 'Sound fixture (tests/fixtures/sound.js): DefineSound in PCM 16-bit, PCM 8-bit stereo, ADPCM and MP3; ' +
+      'StartSound with loops, an envelope and SyncStop; a DefineButtonSound; an ADPCM stream (SoundStreamHead2 and one ' +
+      'SoundStreamBlock per frame); and a button whose release plays an exported sound through the AVM1 Sound object.',
+    build: buildSound,
+    expect: {
+      signature: 'FWS', version: 6, width: 320, height: 200, fps: 12, frameCount: 12, actualFrameCount: 12, tags: 39,
       diagnostics: [], unsupported: []
     }
   },

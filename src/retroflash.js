@@ -7,12 +7,14 @@
    (JPEG/PNG/GIF via the browser decoder, lossless and JPEG alpha in JS) drawn with Canvas 2D, clipDepth masks,
    text (DefineText with embedded glyphs; DefineEditText with embedded or device fonts, word wrap, alignment
    and an HTML subset), AVM1 buttons (DefineButton/DefineButton2: states, hit areas, pointer and keyboard
-   events), and AVM1 (ActionScript 1 and 2) in frame scripts, button actions and clip events. It never
+   events), AVM1 (ActionScript 1 and 2) in frame scripts, button actions and clip events, and sound (event
+   sounds, button sounds, stream sounds and the AVM1 Sound object; PCM, ADPCM and MP3) through an audio backend,
+   Web Audio by default (RetroFlash.createWebAudioBackend). It never
    evaluates JavaScript and never fetches or navigates by itself: what a movie asks of the page (getURL,
    javascript: URLs, FSCommand, ExternalInterface, loads) goes to the host page's `host` and `loader`
    options, after the cancelable events 'navigate', 'call' and 'fscommand'. RetroFlash.createBrowserHost()
-   gives a host that does it with the browser's own APIs; the legacy markup bootstrap uses it. Sound, video and
-   morph shapes are not drawn yet; see getDiagnostics().unsupported.
+   gives a host that does it with the browser's own APIs; the legacy markup bootstrap uses it. Video and morph
+   shapes are not drawn yet; see getDiagnostics().unsupported.
 */
 (function (global) {
   'use strict';
@@ -25,6 +27,7 @@
     CanvasRenderer = M.CanvasRenderer;
   // Keys that would scroll the page (space, page up/down, end, home, arrows): the movie keeps them.
   var NAVIGATION_KEYS = { 32: 1, 33: 1, 34: 1, 35: 1, 36: 1, 37: 1, 38: 1, 39: 1, 40: 1 };
+  function isVolume(v) { return typeof v === 'number' && v >= 0 && v <= 1; }
   function now() { return global.performance && global.performance.now ? global.performance.now() : Date.now(); }
   function consoleWarn(message, detail) {
     if (!global.console || !global.console.warn) return;
@@ -68,6 +71,10 @@
     if (!options.canvas || typeof options.canvas.getContext !== 'function') throw playerError('INVALID_OPTION', 'options.canvas must be a <canvas> element');
     if (options.loader !== undefined && options.loader !== null && typeof options.loader !== 'function') throw playerError('INVALID_OPTION', 'options.loader must be a function');
     if (options.host !== undefined && options.host !== null && typeof options.host !== 'object') throw playerError('INVALID_OPTION', 'options.host must be an object');
+    if (options.audio !== undefined && options.audio !== null && options.audio !== false && (typeof options.audio !== 'object' || typeof options.audio.play !== 'function')) {
+      throw playerError('INVALID_OPTION', 'options.audio must be false or an audio backend with a play method');
+    }
+    if (options.volume !== undefined && !isVolume(options.volume)) throw playerError('INVALID_OPTION', 'options.volume must be a number from 0 to 1');
     this.canvas = options.canvas;
     // host: what the movie asks of the page (navigate, call, fscommand, load, objectID; see src/README.md).
     this.host = options.host || null;
@@ -101,6 +108,11 @@
     var self = this;
     this.report = function (feature, reason, source) { self.recordUnsupported(feature, reason, source); };
     this.renderer = new CanvasRenderer(this.canvas, this.report);
+    // audio: the backend that plays sounds (see src/README.md); false plays none. By default Web Audio, when
+    // the browser has it.
+    var backend = options.audio === false ? null : options.audio || M.createWebAudioBackend();
+    this.audio = new M.AudioController(backend, this.report, this.limits);
+    this.audio.setVolume(options.volume === undefined ? 1 : options.volume);
     this.input = null;
     this.domHandlers = [];
     if (this.options.input && typeof this.canvas.addEventListener === 'function') this.attachInput();
@@ -275,6 +287,7 @@
     function report(feature, reason, source) { if (!superseded()) self.report(feature, reason, source); }
     this.pause();
     this.closeLoads();
+    this.audio.clear();
     if (this.movie) this.movie.release();
     this.state = 'loading';
     this.movie = this.root = null;
@@ -297,6 +310,7 @@
       if (superseded()) { movie.release(); return null; }
       this.movie = movie;
       this.movieOptions = movieOptions;
+      this.audio.prepare(movie);
       this.fps = swf.fps > 0 ? swf.fps : 12;
       if (!(swf.fps > 0)) this.recordUnsupported('timeline:zeroFps', 'The file declares 0 fps; playing at 12 fps.', 'header');
       this.restart();
@@ -326,9 +340,10 @@
   // Fresh root timeline at frame 1, with its frame scripts run (as when the movie starts).
   Player.prototype.restart = function () {
     this.closeLoads();
+    this.audio.reset();
     var self = this, previous = this.env;
     var env = this.env = createEnv(this.movie, this.report, {
-      actions: this.options.actions, limits: this.limits, loader: this.loader, maxFileBytes: this.options.maxFileBytes,
+      actions: this.options.actions, limits: this.limits, loader: this.loader, maxFileBytes: this.options.maxFileBytes, audio: this.audio,
       host: this.host, dispatch: function (type, request) { return self.dispatch(env, type, request); },
       interaction: function (entry) { if (self.env === env) self.recordInteraction(entry); }
     });
@@ -360,10 +375,11 @@
     this.input = new InputController(this.env, function () { return self.root; });
     if (previous && previous.inside) { this.input.inside = true; this.input.x = previous.x; this.input.y = previous.y; }
     if (this.input.afterTick()) this.env.scripts.run();
-    if (this.movie.buttonSounds.length) this.recordUnsupported('sound:DefineButtonSound', 'Button sounds are not played (no audio yet).', this.movie.buttonSounds.join(','));
   };
+  // Shows the result of an update. Stream sounds of timelines that stopped or left the stage end here too.
   Player.prototype.render = function () {
     var swf = this.movie.swf, b = swf.bounds;
+    this.audio.sync();
     this.renderer.render({
       background: swf.background, xMin: b.xminTwips, yMin: b.yminTwips, characters: this.movie.characters,
       widthTwips: Math.max(1, b.xmaxTwips - b.xminTwips), heightTwips: Math.max(1, b.ymaxTwips - b.yminTwips)
@@ -375,6 +391,7 @@
     // A finished non-looping movie restarts like stop(): timelines rebuilt and frame-1 scripts run again.
     if (!this.options.loop && this.root.frame === this.root.frameCount()) { this.restart(); this.render(); }
     this.state = 'playing';
+    this.audio.resume();
     this.lastTime = null;
     this.accumulator = 0;
     var self = this;
@@ -384,7 +401,15 @@
     if (this.rafId) global.cancelAnimationFrame(this.rafId);
     this.rafId = 0;
     if (this.state === 'playing') this.state = 'paused';
+    this.audio.suspend();
   };
+  // Volume of the movie's sounds, from 0 to 1 (the Player option `volume`).
+  Player.prototype.setVolume = function (volume) {
+    if (!isVolume(volume)) throw playerError('INVALID_OPTION', 'volume must be a number from 0 to 1');
+    this.audio.setVolume(volume);
+    return this;
+  };
+  Player.prototype.getVolume = function () { return this.audio.volume; };
   // Rewinds to the start: every timeline is rebuilt at frame 1 and frame-1 scripts run again; stays paused.
   Player.prototype.stop = function () {
     this.assertUsable();
@@ -412,7 +437,8 @@
     if (!Number.isFinite(n)) throw playerError('INVALID_FRAME', 'Unknown frame ' + JSON.stringify(frame));
     var scripts = this.env.scripts, mark = scripts.mark();
     this.env.instances = 0;
-    this.root.gotoFrame(n);
+    this.audio.quiet++;
+    try { this.root.gotoFrame(n); } finally { this.audio.quiet--; }
     scripts.dropSince(mark);
     if (this.input) this.input.pruneRemoved();
     this.render();
@@ -421,6 +447,7 @@
   Player.prototype.advance = function () {
     this.env.instances = 0;
     this.env.scripts.beginUpdate();
+    this.audio.collect(this.env.scripts);
     var ended = this.root.tick();
     this.env.scripts.run();
     if (this.input && this.input.afterTick()) {
@@ -502,6 +529,7 @@
     this.state = 'destroyed';
     this.listeners = {};
     this.closeLoads();
+    this.audio.close();
     if (this.movie) this.movie.release();
     this.movie = this.root = this.input = null;
   };
@@ -511,6 +539,7 @@
     Player: Player,
     defaultLimits: DEFAULT_LIMITS,
     createBrowserHost: M.createBrowserHost,
+    createWebAudioBackend: M.createWebAudioBackend,
     // Building blocks of every module, exposed for tests and tooling; not a stable API.
     internals: Object.freeze(Object.assign({}, M))
   });

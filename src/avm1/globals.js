@@ -548,22 +548,120 @@
       }
     });
 
-    // ---- Sound: accepted and silent (the player has no audio yet) ----
+    /* ---- Sound: library sounds (attachSound) and MP3 files (loadSound), played by the player's audio. A Sound
+       made with a movie clip controls the sounds of that clip, and its volume and pan are the clip's; one made
+       without a target controls every sound. Once its clip has left the stage it does nothing. ---- */
     P.Sound = new AvmObject(P.Object);
-    makeClass('Sound', P.Sound, function (rt) {
-      rt.scheduler.report('sound:Sound', 'Sound objects are accepted but silent: the player has no audio yet.', 'Sound');
+    makeClass('Sound', P.Sound, function (rt, self, args) {
+      if (!isObject(self)) return undefined;
+      self.isSound = true;
+      self.soundTarget = isClip(arg(args, 0)) ? arg(args, 0) : null;
       return undefined;
     });
     hide(P.Sound, 'duration', 0);
     hide(P.Sound, 'position', 0);
-    ['attachSound', 'start', 'stop', 'setVolume', 'setPan', 'setTransform', 'loadSound'].forEach(function (name) {
-      hide(P.Sound, name, fn(function () { return undefined; }));
-    });
+    function audio() { return M.audioOf(rt.scheduler); }
+    function liveSound(self) { return isObject(self) && self.isSound && !(self.soundTarget && self.soundTarget.removed) ? self : null; }
+    function transformOf(self) {
+      var clip = self.soundTarget;
+      if (!clip) return audio().transform;
+      return clip.soundTransform || (clip.soundTransform = M.newSoundTransform());
+    }
+    // A sound character exported (ExportAssets) under `name` by the movie of the Sound's target, or of the root.
+    function exportedSound(self, name) {
+      var env = (self.soundTarget || rt.scheduler.root).env, exports = env.exports, id = exports[name];
+      if (id === undefined) Object.keys(exports).forEach(function (k) { if (id === undefined && k.toLowerCase() === name.toLowerCase()) id = exports[k]; });
+      var sound = id === undefined ? null : env.characters[id];
+      return sound && sound.type === 'sound' ? sound : null;
+    }
+    function useSound(self, sound) {
+      self.sound = sound;
+      self.instance = null;
+      self.soundDuration = Math.round(sound.sampleCount / sound.rate * 1000);
+      hide(self, 'duration', self.soundDuration);
+      hide(self, 'position', 0);
+    }
+    function startSound(self, offset, loops) {
+      if (self.streaming && self.instance) audio().remove(self.instance); // a streaming sound plays once at a time
+      var inst = audio().start(self.sound, { inPoint: offset > 0 ? Math.floor(offset * 44100) : 0, loopCount: loops }, self.soundTarget, self);
+      if (inst) self.instance = inst;
+    }
     methods(P.Sound, {
-      getVolume: function () { return 100; },
-      getPan: function () { return 0; },
-      getBytesLoaded: function () { return 0; },
-      getBytesTotal: function () { return 0; }
+      attachSound: function (rt, self, args) {
+        var s = liveSound(self), sound = s && exportedSound(s, str(arg(args, 0)));
+        if (sound) { useSound(s, sound); s.streaming = false; }
+        else if (s) rt.scheduler.report('sound:attachMissing', 'Sound.attachSound names no exported sound; nothing is attached.', str(arg(args, 0)));
+      },
+      // start(secondOffset, loops): a new instance of the sound, from secondOffset seconds, played loops times.
+      start: function (rt, self, args) {
+        var s = liveSound(self);
+        if (!s || !s.sound) return;
+        var loops = num(arg(args, 1));
+        startSound(s, num(arg(args, 0)), s.streaming || !(loops >= 1) ? 1 : Math.min(65535, Math.floor(loops)));
+      },
+      // stop(): the sounds of the target (every sound without one); stop(name): every instance of that sound.
+      stop: function (rt, self, args) {
+        var s = liveSound(self);
+        if (!s) return;
+        if (arg(args, 0) !== undefined) {
+          var sound = exportedSound(s, str(args[0]));
+          if (sound) audio().stopSound(sound);
+        } else if (s.soundTarget) audio().stopOwned(s.soundTarget);
+        else audio().stopAll();
+      },
+      getVolume: function (rt, self) { var s = liveSound(self); return s ? transformOf(s).volume : undefined; },
+      setVolume: function (rt, self, args) {
+        var s = liveSound(self);
+        if (!s) return;
+        transformOf(s).volume = toInt32(arg(args, 0), version);
+        audio().refresh();
+      },
+      // Pan -100 (left only) to 100 (right only): the other side is turned down.
+      getPan: function (rt, self) { var s = liveSound(self), t = s && transformOf(s); return t ? t.rr - t.ll : undefined; },
+      setPan: function (rt, self, args) {
+        var s = liveSound(self);
+        if (!s) return;
+        var t = transformOf(s), pan = toInt32(arg(args, 0), version);
+        t.ll = pan > 0 ? 100 - pan : 100;
+        t.rr = pan < 0 ? 100 + pan : 100;
+        t.lr = t.rl = 0;
+        audio().refresh();
+      },
+      // { ll, lr, rr, rl }: percent of the left and right input sent to the left and right output.
+      getTransform: function (rt, self) {
+        var s = liveSound(self);
+        if (!s) return undefined;
+        var t = transformOf(s), o = new AvmObject(P.Object);
+        ['ll', 'lr', 'rr', 'rl'].forEach(function (k) { setMember(rt, o, k, t[k]); });
+        return o;
+      },
+      setTransform: function (rt, self, args) {
+        var s = liveSound(self), value = arg(args, 0);
+        if (!s || !isObject(value)) return;
+        var t = transformOf(s);
+        ['ll', 'lr', 'rr', 'rl'].forEach(function (k) { if (hasMember(rt, value, k)) t[k] = toInt32(getMember(rt, value, k), version); });
+        audio().refresh();
+      },
+      getBytesLoaded: function (rt, self) { return isObject(self) && self.bytesLoaded !== undefined ? self.bytesLoaded : 0; },
+      getBytesTotal: function (rt, self) { return isObject(self) && self.bytesTotal !== undefined ? self.bytesTotal : 0; },
+      /* loadSound(url, isStreaming): an MP3 file, through the host page's loader. onLoad(success) follows; a
+         streaming sound starts playing as soon as it has arrived. */
+      loadSound: function (rt, self, args) {
+        var s = liveSound(self), url = str(arg(args, 0)), root = rt.scheduler.root;
+        if (!s || !root) return;
+        var streaming = toBoolean(arg(args, 1), version), token = s.loadToken = {};
+        s.streaming = streaming;
+        if (!root.env.loads) return rt.scheduler.report('load:noLoader', 'Loading a URL needs a loader from the host page (the Player option `loader` or `host.load`); nothing was loaded.', url);
+        root.env.loads.request(s.soundTarget || root, url, 'sound', 0, null, function (result, error) {
+          if (s.loadToken !== token) return;
+          if (result) {
+            useSound(s, result.sound);
+            s.bytesLoaded = s.bytesTotal = result.bytes;
+            if (streaming && liveSound(s)) startSound(s, 0, 1);
+          }
+          rt.scheduler.enqueueCall(rt.scheduler.root, getMember(rt, s, 'onLoad'), s, [!error], 'onLoad');
+        });
+      }
     });
 
     // ---- flash.external.ExternalInterface: calls into the host page, and callbacks the page can call ----

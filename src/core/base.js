@@ -14,6 +14,7 @@
     maxInstances: 100000,                   // sprite/button instances created in one step (tick, seek, input event)
     maxBitmapPixels: 4096 * 4096,           // pixels of one bitmap
     maxTotalBitmapPixels: 4 * 4096 * 4096,  // pixels of all bitmaps of a movie together (about 256 MB of RGBA)
+    maxAudioSamples: 64 * 1024 * 1024,      // decoded sound samples of a movie together (about 256 MB as 32-bit floats)
     maxActionBlocks: 10000,                 // AVM1 action blocks run per tick or input event
     maxActionSteps: 100000,                 // AVM1 actions executed per tick or input event
     maxActionStack: 100000,                 // values on the stack of one AVM1 action block

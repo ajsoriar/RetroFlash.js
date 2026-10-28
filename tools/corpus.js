@@ -8,7 +8,8 @@
      input   buttons and pointer handling.
    Each file runs the same way every time: a fixed clock (the frame rate), a fixed random sequence, a fixed
    number of frames, and a pointer probe (move to the centre, press, release) halfway. Bitmaps are not decoded
-   (that needs a browser), and drawing goes to a stand-in canvas, so pixels are not compared.
+   (that needs a browser), and drawing goes to a stand-in canvas, so pixels are not compared. Sounds go to a
+   silent output: what could not be played (codecs, missing sounds, limits) is still reported.
    With --resources DIR, a URL a script loads (loadMovie, loadVariables) is answered with the file of DIR named
    like its last path segment; images are then only checked by their header. Without it, loads are refused.
    Loads are shown at the next frame boundary, after the host answered.
@@ -26,6 +27,8 @@ function installCanvasStandIns() {
   if (!globalThis.Path2D) globalThis.Path2D = class { addPath() {} moveTo() {} lineTo() {} quadraticCurveTo() {} bezierCurveTo() {} closePath() {} rect() {} };
   if (!globalThis.DOMMatrix) globalThis.DOMMatrix = class { constructor(m) { this.m = m; } };
 }
+// An audio backend that plays nothing; its sounds never finish.
+const SILENT_AUDIO = { play: () => ({ stop() {}, setGains() {}, position: () => null }) };
 function standInCanvas() {
   const metrics = () => ({ width: 0, actualBoundingBoxAscent: 0, actualBoundingBoxDescent: 0, fontBoundingBoxAscent: 0, fontBoundingBoxDescent: 0, addColorStop() {} });
   const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : metrics), set: (t, k, v) => { t[k] = v; return true; } });
@@ -116,7 +119,7 @@ async function analyze(bytes, name, { frames = 60, resources = null } = {}) {
   let now = 0;
   try {
     movie = new I.Movie(swf);
-    env = I.createEnv(movie, report, { loader: resources ? folderLoader(resources) : null });
+    env = I.createEnv(movie, report, { loader: resources ? folderLoader(resources) : null, audio: new I.AudioController(SILENT_AUDIO, report) });
     env.loads.decodeImage = headerOnlyImage;
     env.loads.decodeBitmaps = false; // as for the main movie: bitmaps need a browser
     env.scripts.clock = () => now;
@@ -135,7 +138,7 @@ async function analyze(bytes, name, { frames = 60, resources = null } = {}) {
   // Each update starts a new budget; the steps of the previous one are added to the total first.
   let steps = 0;
   const begin = () => { steps += env.scripts.steps; env.scripts.beginUpdate(); };
-  const update = () => { begin(); env.scripts.run(); if (input.afterTick()) env.scripts.run(); };
+  const update = () => { begin(); env.scripts.run(); if (input.afterTick()) env.scripts.run(); env.audio.sync(); };
   // What arrived from the loader is shown at the frame boundary, as the player does.
   const loads = async () => {
     await env.loads.idle();
@@ -153,9 +156,11 @@ async function analyze(bytes, name, { frames = 60, resources = null } = {}) {
       now = f * duration;
       env.instances = 0;
       begin();
+      env.audio.collect(env.scripts);
       root.tick();
       env.scripts.run();
       if (input.afterTick()) env.scripts.run();
+      env.audio.sync();
       if (env.scripts.runTimers()) update();
       if (f === Math.ceil(frames / 2)) {
         if (input.move(centre[0], centre[1])) update();

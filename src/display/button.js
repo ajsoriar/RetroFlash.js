@@ -10,6 +10,14 @@
     IDLE_TO_OVER_UP: 1 << 0, OVER_UP_TO_IDLE: 1 << 1, OVER_UP_TO_OVER_DOWN: 1 << 2, OVER_DOWN_TO_OVER_UP: 1 << 3,
     OVER_DOWN_TO_OUT_DOWN: 1 << 4, OUT_DOWN_TO_OVER_DOWN: 1 << 5, OUT_DOWN_TO_IDLE: 1 << 6
   };
+  // DefineButtonSound entries by state change: 0 OverUpToIdle, 1 IdleToOverUp, 2 OverUpToOverDown,
+  // 3 OverDownToOverUp. Dragging out and back in plays nothing; release outside plays the OverUpToIdle sound.
+  var SOUND_OF = {};
+  SOUND_OF[BUTTON.OVER_UP_TO_IDLE] = 0;
+  SOUND_OF[BUTTON.OUT_DOWN_TO_IDLE] = 0;
+  SOUND_OF[BUTTON.IDLE_TO_OVER_UP] = 1;
+  SOUND_OF[BUTTON.OVER_UP_TO_OVER_DOWN] = 2;
+  SOUND_OF[BUTTON.OVER_DOWN_TO_OVER_UP] = 3;
 
   /* An AVM1 button instance placed in `parentClip`. Its display list holds the children of the current state
      (up/over/down); children that stay at the same depth with the same character persist across state changes.
@@ -24,10 +32,12 @@
     this.state = null;
     this.displayList = new Map();
     this.hitList = new Map();
-    // Hit-area children are never drawn or ticked, so sprites in it must not run frame scripts either: the
-    // scripts queued while they are created are dropped.
-    var self = this, scripts = this.env.scripts, mark = scripts.mark();
+    // Hit-area children are never drawn or ticked, so sprites in it must not run frame scripts or play sounds
+    // either: the scripts queued while they are created are dropped.
+    var self = this, scripts = this.env.scripts, mark = scripts.mark(), audio = this.env.audio;
+    if (audio) audio.quiet++;
     character.records.forEach(function (r) { if (r.hitTest) self.hitList.set(r.depth, self.child(r, null)); });
+    if (audio) audio.quiet--;
     scripts.dropSince(mark);
     this.setState('up');
   }
@@ -66,6 +76,12 @@
       scripts.enqueue(clip, [a]);
     });
     return matched;
+  };
+
+  // The sound of a state change (DefineButtonSound), owned by the timeline the button is on.
+  ButtonInstance.prototype.playSound = function (condition) {
+    var sound = this.character.sounds && this.character.sounds[SOUND_OF[condition]], env = this.parentClip.env;
+    if (sound && env.audio) env.audio.perform(this.parentClip, env.characters, sound.soundId, sound.info);
   };
 
   Object.assign(M, { BUTTON: BUTTON, ButtonInstance: ButtonInstance });

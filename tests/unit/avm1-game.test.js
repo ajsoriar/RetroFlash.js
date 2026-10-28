@@ -1,7 +1,7 @@
 'use strict';
 // AVM1 game APIs: the mini game fixture (the acceptance test: a hero moved with the keys and a score), clip
 // events (onClipEvent and AS2 handlers), Key and Mouse, timers, dragging, clips acting as buttons, attachMovie,
-// createEmptyMovieClip, swapDepths, getBounds, hitTest, Color, Sound, Stage and DoInitAction. Movies are SWFs
+// createEmptyMovieClip, swapDepths, getBounds, hitTest, Color, Stage and DoInitAction (Sound: audio.test.js). Movies are SWFs
 // built in memory, driven tick by tick with an InputController, as the player does.
 const fs = require('fs');
 const path = require('path');
@@ -176,7 +176,7 @@ test('Key state, Mouse.hide, getTimer, setInterval, setTimeout and clearInterval
   assert.strictEqual(g.v('ticks'), 2, 'cleared');
 });
 
-test('Stage, Color.setRGB/getRGB/setTransform, and Sound (silent, reported)', async () => {
+test('Stage, Color.setRGB/getRGB/setTransform, and a Sound without an attached sound', async () => {
   const g = await movie([square(1), sprite(2, placeShape(1, 1)), place(1, 2, 'a'), script(
     set('w', push('Stage'), GET, push('width'), [0x4e]),
     set('c', push('a'), GET, push(1, 'Color'), [0x40]), method('c', 'setRGB', 0x336699), POP, set('rgb', method('c', 'getRGB')),
@@ -184,7 +184,7 @@ test('Stage, Color.setRGB/getRGB/setTransform, and Sound (silent, reported)', as
   ), show()]);
   assert.deepStrictEqual([g.v('w'), g.v('rgb'), g.v('vol')], [550, 0x336699, 100]);
   assert.deepStrictEqual(g.child('a').displayObject().cx, [0, 0, 0, 1, 0x33, 0x66, 0x99, 0]);
-  assert.ok(g.reported.includes('sound:Sound'));
+  assert.ok(!g.reported.some((f) => f.startsWith('sound:')), 'start() without a sound plays nothing');
 });
 
 // ---- Dragging, buttons made of clips, MovieClip methods --------------------------------------------------------

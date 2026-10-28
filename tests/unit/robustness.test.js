@@ -234,7 +234,7 @@ const sprite = (id, ...tags) => B.tag(B.T.DefineSprite, Buffer.concat([B.body((w
 
 test('limits: defaults, overrides, and invalid values', () => {
   const D = RetroFlash.defaultLimits;
-  assert.deepStrictEqual(Object.keys(D), ['maxNesting', 'maxInstances', 'maxBitmapPixels', 'maxTotalBitmapPixels', 'maxActionBlocks', 'maxActionSteps', 'maxActionStack', 'maxCallDepth']);
+  assert.deepStrictEqual(Object.keys(D), ['maxNesting', 'maxInstances', 'maxBitmapPixels', 'maxTotalBitmapPixels', 'maxAudioSamples', 'maxActionBlocks', 'maxActionSteps', 'maxActionStack', 'maxCallDepth']);
   assert.ok(Object.isFrozen(D));
   assert.deepStrictEqual(headlessPlayer().limits, D);
   const custom = headlessPlayer({ maxNesting: 4, maxActionSteps: 50, maxBitmapPixels: null });

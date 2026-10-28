@@ -16,5 +16,6 @@
   "input/hit-test.js",
   "input/input.js",
   "render/canvas-renderer.js",
-  "retroflash.js"
+  "retroflash.js",
+  "browser/legacy-autoplay.js"
 ]

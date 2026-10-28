@@ -449,7 +449,7 @@ Events, timers, and listeners are queued with the frame scripts and share their 
 
 #### Loading into clips
 
-The player never fetches anything. A script that loads a movie, an image, or variables asks the host page, through the Player option `loader`:
+The `Player` API does not fetch files itself. The bundled browser bootstrap recognizes legacy Flash `<object>` and `<embed>` elements, then loads their SWF and movie-requested assets from the same origin. This automatic mode requires serving the page over HTTP or HTTPS; browsers do not let a page read a local `file://` SWF this way. For explicit `Player` use, a script that loads a movie, an image, or variables asks the host page, through the Player option `loader`:
 
 ```js
 const files = new Map([['visor.swf', visorFile], ['img1.jpg', photoFile]]); // Files or Uint8Arrays

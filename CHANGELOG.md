@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The browser bundle automatically replaces legacy Flash `<object>` and `<embed>` elements, loading the SWF and its resources from the same origin. The player logs initialization, load results, errors, SWF diagnostics, and unsupported features to the console.
+
 ### Fixed
 
 - **`GetURL2` flags.** The decoder read them as the SWF 19 drawing shows them, so the load-into-clip flag (`0x40`, written by `loadMovie`) was taken for the `GET` method. They are now read as Flash Player and the authoring tools write them: `0x80` loads variables, `0x40` loads into a clip, the low two bits are the method (3 is read as none).

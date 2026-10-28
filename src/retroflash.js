@@ -2,13 +2,15 @@
    API: const player = new RetroFlash.Player({ canvas }); await player.load(file); player.play();
    Load swf-reader.js and the player modules first, in the order of src/modules.json, or load the single
    bundle dist/retroflash.min.js instead (npm run build).
+   A bundled browser bootstrap also replaces legacy Flash object/embed elements and loads their same-origin SWF.
    Character dictionary, display list and timelines (root and DefineSprite), DefineShape 1-4 and bitmaps
    (JPEG/PNG/GIF via the browser decoder, lossless and JPEG alpha in JS) drawn with Canvas 2D, clipDepth masks,
    text (DefineText with embedded glyphs; DefineEditText with embedded or device fonts, word wrap, alignment
    and an HTML subset), AVM1 buttons (DefineButton/DefineButton2: states, hit areas, pointer and keyboard
    events), and AVM1 (ActionScript 1 and 2) in frame scripts, button actions and clip events. It never
-   evaluates JavaScript, navigates or fetches: movies, images and variables that scripts load come from the
-   host page's `loader` option. Sound, video and morph shapes are not drawn yet; see
+   evaluates JavaScript or navigates. The legacy markup bootstrap fetches only same-origin SWFs and resources;
+   otherwise movies, images and variables that scripts load come from the host page's `loader` option. Sound,
+   video and morph shapes are not drawn yet; see
    getDiagnostics().unsupported.
 */
 (function (global) {
@@ -23,6 +25,27 @@
   // Keys that would scroll the page (space, page up/down, end, home, arrows): the movie keeps them.
   var NAVIGATION_KEYS = { 32: 1, 33: 1, 34: 1, 35: 1, 36: 1, 37: 1, 38: 1, 39: 1, 40: 1 };
   function now() { return global.performance && global.performance.now ? global.performance.now() : Date.now(); }
+  function consoleWarn(message, detail) {
+    if (!global.console || !global.console.warn) return;
+    if (detail) global.console.warn('[RetroFlash.js] ' + message, detail);
+    else global.console.warn('[RetroFlash.js] ' + message);
+  }
+  function consoleError(message, error) {
+    if (!global.console || !global.console.error) return;
+    if (error) global.console.error('[RetroFlash.js] ' + message, error);
+    else global.console.error('[RetroFlash.js] ' + message);
+  }
+  function logSwfDiagnostics(player, swf) {
+    var unsupported = swf.unsupported || [], diagnostics = (swf.diagnostics || []).filter(function (entry) {
+      return entry.level !== 'info';
+    });
+    unsupported.slice(0, 10).forEach(function (entry) { player.logUnsupported(entry); });
+    if (unsupported.length > 10) consoleWarn((unsupported.length - 10) + ' additional unsupported feature type(s) omitted.');
+    diagnostics.slice(0, 8).forEach(function (entry) {
+      consoleWarn('SWF ' + entry.level + (entry.code ? ' [' + entry.code + ']' : '') + ': ' + entry.message, entry);
+    });
+    if (diagnostics.length > 8) consoleWarn((diagnostics.length - 8) + ' additional SWF diagnostic(s) omitted.');
+  }
   delete global.RetroFlashModules;
 
   var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1 };
@@ -48,6 +71,8 @@
     this.limits = resolveLimits(options);
     this.state = 'idle';
     this.listeners = {};
+    this.loggedErrors = Object.create(null);
+    this.loggedUnsupported = Object.create(null);
     this.movie = null;
     this.root = null;
     this.unsupported = [];
@@ -125,9 +150,23 @@
     return this;
   };
   Player.prototype.emit = function (type, detail) {
+    if (type === 'error') this.logError(detail);
     (this.listeners[type] || []).slice().forEach(function (fn) {
       try { fn(detail); } catch (err) { if (global.console) console.error(err); }
     });
+  };
+  Player.prototype.logError = function (error) {
+    var message = error && error.message ? error.message : String(error || 'Unknown player error');
+    var key = (error && error.code ? error.code + ':' : '') + message;
+    if (this.loggedErrors[key]) return;
+    this.loggedErrors[key] = true;
+    consoleError(message, error);
+  };
+  Player.prototype.logUnsupported = function (entry) {
+    var key = String(entry.feature) + '\n' + String(entry.reason);
+    if (this.loggedUnsupported[key]) return;
+    this.loggedUnsupported[key] = true;
+    consoleWarn('Unsupported SWF feature "' + entry.feature + '": ' + entry.reason, entry);
   };
   // Aggregated per feature; `count` is the number of distinct sources (character ids, depths).
   Player.prototype.recordUnsupported = function (feature, reason, source) {
@@ -140,7 +179,10 @@
     if (entry.sources.indexOf(key) === -1) {
       entry.sources.push(key);
       entry.count++;
-      if (entry.count === 1) this.emit('warning', entry);
+      if (entry.count === 1) {
+        this.logUnsupported(entry);
+        this.emit('warning', entry);
+      }
     }
   };
   Player.prototype.assertUsable = function () {
@@ -150,6 +192,8 @@
   // without changing the player, even if it fails. Its diagnostics are dropped from that moment on.
   Player.prototype.load = async function (input) {
     this.assertUsable();
+    this.loggedErrors = Object.create(null);
+    this.loggedUnsupported = Object.create(null);
     if (!global.SWFReader) throw playerError('MISSING_READER', 'Load swf-reader.js before retroflash.js');
     var serial = ++this.loadSerial, self = this;
     function superseded() { return self.state === 'destroyed' || serial !== self.loadSerial; }
@@ -171,6 +215,7 @@
       throw err;
     }
     if (superseded()) return null;
+    logSwfDiagnostics(this, swf);
     try {
       movie = new Movie(swf);
       await movie.decodeBitmaps({ maxPixels: this.limits.maxBitmapPixels, remaining: this.limits.maxTotalBitmapPixels }, report);

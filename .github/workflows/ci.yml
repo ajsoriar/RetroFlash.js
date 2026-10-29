@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node.js ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [16, 22]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install development dependencies
+        run: npm ci
+
+      - name: Run source tests
+        run: npm test
+
+      - name: Build and test the browser bundle
+        run: npm run test:dist
+
+      - name: Check the committed browser bundle is current
+        run: |
+          bundle="dist/retroflash-$(node -p "require('./package.json').version").min.js"
+          git ls-files --error-unmatch -- "$bundle" "$bundle.map"
+          changes="$(git status --porcelain --untracked-files=all -- dist/)"
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            echo "::error::dist/ does not match the build (modified or untracked files): run npm run build and commit dist/."
+            exit 1
+          fi
+
+      - name: Check the publishable package contents
+        run: npm pack --dry-run

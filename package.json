@@ -1,13 +1,47 @@
 {
   "name": "retroflash.js",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Dependency-free Flash SWF player and ActionScript runtime in JavaScript and Canvas (in development).",
+  "version": "1.0.0-beta.1",
+  "description": "Dependency-free Flash SWF player and ActionScript runtime for the browser (beta).",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ajsoriar/RetroFlash.js.git"
+  },
+  "homepage": "https://github.com/ajsoriar/RetroFlash.js#readme",
+  "bugs": {
+    "url": "https://github.com/ajsoriar/RetroFlash.js/issues"
+  },
+  "browser": "./dist/retroflash-1.0.0-beta.1.min.js",
+  "publishConfig": {
+    "tag": "beta"
+  },
+  "files": [
+    "dist/",
+    "assets/",
+    "src/",
+    "demo/",
+    "tests/COMPATIBILITY.md",
+    "tests/fixtures/",
+    "CHANGELOG.md",
+    "LIMITATIONS.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "flash",
+    "swf",
+    "swf-player",
+    "actionscript",
+    "avm1",
+    "canvas",
+    "browser",
+    "retroflash"
+  ],
   "scripts": {
     "build": "node tools/build.js",
     "test": "node tests/run.js",
     "test:dist": "node tools/build.js && node tests/run.js --dist",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run test:dist",
     "fixtures": "node tests/fixtures/build-fixtures.js",
     "corpus": "node tools/corpus.js",
     "corpus:fixtures": "node tools/corpus.js tests/fixtures/valid tests/fixtures/warn tests/fixtures/bad --json tests/corpus/fixtures-matrix.json --md tests/corpus/fixtures-matrix.md"

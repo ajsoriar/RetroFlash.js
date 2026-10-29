@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RetroFlash.js - Player</title>
+<title>RetroFlash.js - Player - v1.0.0-beta.1</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,sans-serif}body{max-width:1050px;margin:35px auto;padding:0 18px;background:#111827;color:#e5e7eb}
 h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}a{color:#67e8f9}
@@ -16,7 +16,8 @@ details{margin:16px 0;padding:10px 12px;border:1px solid #374151;border-radius:8
 </style>
 </head>
 <body>
-<h1>RetroFlash.js <small>Player · v0.4</small></h1>
+<h1>RetroFlash.js <small>Player · v1.0.0-beta.1</small></h1>
+<p>Load and play SWF movies on Canvas 2D. Explore playback controls, runtime diagnostics, browser interactions, and support for files loaded by a movie.</p>
 <p>Plays the vector part of a SWF on Canvas 2D: <code>DefineShape</code> 1–4 (solid fills, linear/radial gradients, lines), the display list,
 the root and <code>DefineSprite</code> timelines, <code>clipDepth</code> masks, and bitmaps: JPEG, PNG, GIF, JPEG with alpha, and lossless.
 Static text uses the movie's embedded glyphs. Text fields use embedded or device fonts, with word wrap, alignment and an HTML subset.
@@ -44,7 +45,7 @@ Add these before opening the main SWF. For the launcher demo, add <code>visor.sw
 </details>
 <h2>Not drawn or not supported</h2>
 <table><thead><tr><th>Feature</th><th>Count</th><th>Reason</th></tr></thead><tbody id="unsupported"></tbody></table>
-<!-- The source scripts, in the order of src/modules.json. dist/retroflash.min.js (npm run build) replaces them all. -->
+<!-- The source scripts, in the order of src/modules.json. dist/retroflash-<version>.min.js (npm run build) replaces them all. -->
 <script src="../src/swf-reader.js"></script>
 <script src="../src/core/base.js"></script>
 <script src="../src/core/math.js"></script>

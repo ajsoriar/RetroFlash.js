@@ -1,6 +1,6 @@
 'use strict';
 // The module manifest and the demo's script list. The bundle itself is tested by npm run test:dist, which
-// runs this whole suite against dist/retroflash.min.js.
+// runs this whole suite against the versioned bundle in dist/.
 const fs = require('fs');
 const path = require('path');
 const { test, assert } = require('../support/harness');

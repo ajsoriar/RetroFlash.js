@@ -1,6 +1,6 @@
 # Limitations
 
-What RetroFlash.js does not do yet, or does only in part, grouped by subject. It covers SWFReader 0.6 and RetroFlash.Player 0.4, including the unreleased work in [`CHANGELOG.md`](./CHANGELOG.md), as of 2026-10-28.
+What RetroFlash.js does not do yet, or does only in part, grouped by subject. It covers SWFReader 0.6.0 and RetroFlash.Player 1.0.0-beta.1, as of 2026-10-28.
 
 Most of these are reported at run time in `player.getDiagnostics().unsupported`; the feature name appears in brackets. What each supported feature does is described in [`src/README.md`](./src/README.md), and how it was verified in [`tests/COMPATIBILITY.md`](./tests/COMPATIBILITY.md).
 

@@ -130,9 +130,9 @@ Values follow the SWF specification:
 
 From the project root, run `node tests/run.js` (Node 16+, no dependencies). `node tools/corpus.js` writes the compatibility matrix of any SWF files, by layer. See [`../tests/COMPATIBILITY.md`](../tests/COMPATIBILITY.md).
 
-# RetroFlash.Player (`retroflash.js` v0.4)
+# RetroFlash.Player (`retroflash.js` v1.0.0-beta.1)
 
-Load `../dist/retroflash.min.js` (built by `npm run build`), which holds the reader and the player. Alternatively, load the source scripts in the order of [`modules.json`](./modules.json), as the demo [`../demo/player.html`](../demo/player.html) does.
+Load `../dist/retroflash-<version>.min.js` (built by `npm run build`; for this release, `retroflash-1.0.0-beta.1.min.js`), which holds the reader and the player. Alternatively, load the source scripts in the order of [`modules.json`](./modules.json), as the demo [`../demo/player.html`](../demo/player.html) does.
 
 ```js
 const player = new RetroFlash.Player({

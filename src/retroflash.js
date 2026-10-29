@@ -1,8 +1,9 @@
-/* RetroFlash.js v0.4 - SWF player prototype (browser classic script): the public API, RetroFlash.Player.
+/* RetroFlash.js v1.0.0-beta.1 - SWF player (browser classic script): the public API, RetroFlash.Player.
    API: const player = new RetroFlash.Player({ canvas }); await player.load(file); player.play();
    Load swf-reader.js and the player modules first, in the order of src/modules.json, or load the single
-   bundle dist/retroflash.min.js instead (npm run build).
-   A bundled browser bootstrap also replaces legacy Flash object/embed elements and loads their same-origin SWF.
+   bundle dist/retroflash-<version>.min.js instead (npm run build).
+   A bundled browser bootstrap also replaces legacy Flash object/embed elements and loads their SWF, cross-origin
+   ones when CORS allows it.
    Character dictionary, display list and timelines (root and DefineSprite), DefineShape 1-4 and bitmaps
    (JPEG/PNG/GIF via the browser decoder, lossless and JPEG alpha in JS) drawn with Canvas 2D, clipDepth masks,
    text (DefineText with embedded glyphs; DefineEditText with embedded or device fonts, word wrap, alignment

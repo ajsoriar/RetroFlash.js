@@ -1,6 +1,6 @@
 'use strict';
 // Runs every tests/unit/*.test.js with the built-in harness. Usage: node tests/run.js [--dist] (Node 16+).
-// --dist tests the bundle dist/retroflash.min.js (npm run build) instead of the source scripts.
+// --dist tests the versioned bundle in dist/ (npm run build) instead of the source scripts.
 const fs = require('fs');
 const path = require('path');
 const { run, group } = require('./support/harness');

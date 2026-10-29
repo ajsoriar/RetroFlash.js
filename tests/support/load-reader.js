@@ -28,9 +28,11 @@ if (typeof globalThis.DecompressionStream !== 'function') {
 // The source scripts in the order of src/modules.json or, with `--dist`, the bundle built by tools/build.js.
 const root = path.join(__dirname, '..', '..');
 const useDist = process.argv.includes('--dist');
-const scripts = useDist ? [path.join(root, 'dist', 'retroflash.min.js')]
+const pkg = require(path.join(root, 'package.json'));
+const bundleName = 'retroflash-' + pkg.version + '.min.js';
+const scripts = useDist ? [path.join(root, 'dist', bundleName)]
   : require(path.join(root, 'src', 'modules.json')).map((file) => path.join(root, 'src', file));
-if (useDist && !fs.existsSync(scripts[0])) throw new Error('dist/retroflash.min.js not found: run npm install and npm run build first');
+if (useDist && !fs.existsSync(scripts[0])) throw new Error('dist/' + bundleName + ' not found: run npm install and npm run build first');
 scripts.forEach((file) => require(file));
 
-module.exports = { SWFReader: globalThis.SWFReader, RetroFlash: globalThis.RetroFlash, decompression, source: useDist ? 'dist/retroflash.min.js' : 'src' };
+module.exports = { SWFReader: globalThis.SWFReader, RetroFlash: globalThis.RetroFlash, decompression, source: useDist ? 'dist/' + bundleName : 'src' };

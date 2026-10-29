@@ -80,7 +80,9 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
+/dist/*
+!/dist/retroflash-*.min.js
+!/dist/retroflash-*.min.js.map
 .output
 
 # Gatsby files

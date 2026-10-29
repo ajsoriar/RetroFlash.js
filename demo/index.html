@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SWF Reader - Phase 1</title>
+<title>SWF Reader - Inspector</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,sans-serif}body{max-width:1150px;margin:35px auto;padding:0 18px;background:#111827;color:#e5e7eb}
 h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}#drop{display:block;padding:30px;border:2px dashed #6b7280;border-radius:14px;text-align:center;cursor:pointer;margin:25px 0;background:#1f2937}#drop.over{border-color:#67e8f9}
@@ -11,7 +11,8 @@ h1{margin-bottom:5px}p{color:#9ca3af}code{color:#e5e7eb}#drop{display:block;padd
 </style>
 </head>
 <body>
-<h1>SWF Reader <small>v0.3 · inspector</small></h1>
+<h1>SWF Reader <small>v0.6.0 · inspector</small></h1>
+<p>Inspect a SWF movie's header, tag structure, decoded fields, diagnostics, and unsupported features. This tool reads files without playing them or executing ActionScript.</p>
 <p>Structure inspection only: header, tag index (including DefineSprite contents), and decoded placement records
 (MATRIX, CXFORM, CXFORMWITHALPHA). ActionScript is detected and listed, never executed. No external libraries. To play a movie, open <a href="player.html">player.html</a>.</p>
 <label id="drop" for="file">Drop a .swf file here or click to open one</label>

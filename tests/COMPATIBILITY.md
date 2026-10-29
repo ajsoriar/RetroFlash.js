@@ -1,4 +1,4 @@
-# Compatibility report — SWFReader 0.6.0 · RetroFlash 0.4.0
+# Compatibility report — SWFReader 0.6.0 · RetroFlash 1.0.0-beta.1
 
 This file lists only what the tests demonstrate. Anything that is not listed here is unverified.
 
@@ -6,7 +6,7 @@ This file lists only what the tests demonstrate. Anything that is not listed her
 
 ```sh
 node tests/run.js                        # all tests (Node 16+, no npm install)
-npm run test:dist                        # the same tests against dist/retroflash.min.js (needs npm install)
+npm run test:dist                        # the same tests against the versioned bundle in dist/ (needs npm install)
 node tests/fixtures/build-fixtures.js    # regenerate the fixtures after changing the catalog
 node tests/inspect.js some.swf --tags    # inspect any SWF from the command line
 npm run corpus:fixtures                  # regenerate the fixture matrix (tests/corpus/fixtures-matrix.*)

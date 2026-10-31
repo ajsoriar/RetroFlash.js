@@ -36,6 +36,8 @@
       if (condition === BUTTON.OVER_DOWN_TO_OVER_UP) this.followLink(target);
       return;
     }
+    // ActionScript 3 movies get MouseEvents (click, mouseDown, rollOver, ...) on the button's object.
+    if (this.env.avm2) this.env.avm2.pointerEvent(target, condition);
     if (!target.button) {
       if (target.clip) this.env.scripts.clipEvent(target.clip, CLIP_BUTTON_EVENTS[condition]);
       return;

@@ -141,7 +141,7 @@
     this.report = report;
     this.limits = limits;
     this.enabled = enabled !== false;
-    this.queue = [];          // { clip, blocks }
+    this.queue = [];          // { clip, blocks }, { clip, call, ... } or { clip, task, label }
     this.cache = new Map();   // block -> ActionCode
     this.decoded = { used: 0, max: MAX_DECODED_ACTION_BYTES }; // shared by every cached block
     this.blocks = 0;          // budget used in the current update
@@ -265,6 +265,10 @@
   ActionScheduler.prototype.enqueue = function (clip, blocks) {
     if (this.enabled && blocks.length) this.queue.push({ clip: clip, blocks: blocks });
   };
+  // A JavaScript task run in queue order with the scripts (AVM2 code, avm2/api.js); it reports its own errors.
+  ActionScheduler.prototype.enqueueTask = function (clip, task, label) {
+    if (this.enabled) this.queue.push({ clip: clip, task: task, label: label });
+  };
   /* mark() and dropSince(mark) discard what was queued in between: a scrubbing seek, or the creation of a
      button's hit area, enters frames without running their scripts. */
   ActionScheduler.prototype.mark = function () { return this.queue.length; };
@@ -282,17 +286,19 @@
     return code;
   };
   /* Runs the queue, including what is queued while running (gotos, events), within the budget of the current
-     update. Items are action blocks ({ clip, blocks }) or calls of functions ({ clip, call, thisValue, args }). */
+     update. Items are action blocks ({ clip, blocks }), calls of functions ({ clip, call, thisValue, args }) or
+     tasks ({ clip, task }); each block, call or task counts against limits.maxActionBlocks. */
   ActionScheduler.prototype.run = function () {
     var max = this.limits.maxActionBlocks;
     while (this.queue.length) {
-      var item = this.queue.shift(), blocks = item.call ? [null] : item.blocks;
+      var item = this.queue.shift(), blocks = item.call || item.task ? [null] : item.blocks;
       for (var i = 0; i < blocks.length; i++) {
         if (++this.blocks > max) {
           this.queue.length = 0;
           return this.report('avm1:budget', 'More than ' + max + ' action blocks in one tick or event; the rest were dropped.', 'queue');
         }
-        if (item.call) callHandler(this, item);
+        if (item.task) item.task();
+        else if (item.call) callHandler(this, item);
         else executeAVM1(this, item.clip, blocks[i]);
       }
     }

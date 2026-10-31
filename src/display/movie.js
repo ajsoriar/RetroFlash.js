@@ -4,7 +4,7 @@
 
   var M = global.RetroFlashModules;
   var toMatrix = M.toMatrix, toColorTransform = M.toColorTransform, decodeBitmap = M.decodeBitmap,
-    fontCharacter = M.fontCharacter;
+    fontCharacter = M.fontCharacter, parseAbc = M.parseAbc;
 
   var SHAPE_CODES = { 2: 1, 22: 1, 32: 1, 83: 1 };
   var BITMAP_CODES = { 6: 1, 20: 1, 21: 1, 35: 1, 36: 1, 90: 1 };
@@ -60,6 +60,7 @@
 
   function Movie(swf) {
     var characters = Object.create(null), exports = Object.create(null), jpegTables = null, buttonColors = Object.create(null), buttonSounds = Object.create(null), fontInfos = [], grids = [];
+    var abcBlocks = [], symbolClasses = Object.create(null), sceneData = null;
     // A definition whose body could not be decoded still defines its id (first UI16), so placements report
     // it as an invalid character rather than a missing one.
     function invalidCharacter(tag) {
@@ -114,6 +115,14 @@
         else invalidCharacter(tag);
       } else if (tag.code === 56) {
         if (f) f.assets.forEach(function (a) { if (!(a.name in exports)) exports[a.name] = a.characterId; });
+      } else if (tag.code === 82) {
+        // DoABC: ActionScript 3 bytecode, parsed when the movie starts (avm2/api.js).
+        if (tag.fields) abcBlocks.push({ tag: tag, name: tag.fields.name, lazy: tag.fields.lazyInitialize, start: tag.fields.abcStart, parsed: null, error: null });
+      } else if (tag.code === 76) {
+        // SymbolClass: the first class named for a character wins; character 0 is the main timeline.
+        if (decoded) f.symbols.forEach(function (s) { if (!(s.characterId in symbolClasses)) symbolClasses[s.characterId] = s.name; });
+      } else if (tag.code === 86) {
+        if (decoded && !sceneData) sceneData = f;
       } else if (tag.code === 8) {
         if (!jpegTables && tag.length) jpegTables = swf.getTagData(tag);
       } else if (tag.code === 39 && tag.children && tag.status !== 'invalid') {
@@ -151,12 +160,32 @@
       info.codes.forEach(function (code, i) { if (i < font.glyphs.length && !font.byCode.has(code)) font.byCode.set(code, i); });
     });
     var root = buildTimeline(swf.tags);
+    // Frame labels of DefineSceneAndFrameLabelData (0-based frames) join the FrameLabel ones of the main timeline.
+    if (sceneData) sceneData.labels.forEach(function (l) { if (!(l.name in root.labels)) root.labels[l.name] = l.frame + 1; });
     this.swf = swf;
+    // ActionScript 3: the file's FileAttributes flag (SWF 9+) decides which VM runs it, as in Flash Player.
+    this.actionScript3 = swf.version >= 9 && !!(swf.fileAttributes && swf.fileAttributes.actionScript3);
+    this.abcBlocks = abcBlocks;
+    this.symbolClasses = symbolClasses; // character id -> class name ("package.Name")
+    this.scenes = sceneData && sceneData.scenes.length ? sceneData.scenes : null; // [{ offset (0-based frame), name }]
     this.characters = characters;
     this.exports = exports; // ExportAssets: linkage name -> character id (attachMovie)
     this.jpegTables = jpegTables;
     this.root = { type: 'sprite', id: 0, name: 'root', frames: root.frames, labels: root.labels, stream: withSwf(root.stream) };
   }
+  /* The parsed ABC of a DoABC block (avm2/abc.js), parsed once; a malformed block throws its AbcError each time. */
+  Movie.prototype.abcOf = function (block, maxBytes) {
+    if (!block.parsed && !block.error) {
+      try {
+        block.parsed = parseAbc(this.swf.getTagData(block.tag).subarray(block.start), { maxAbcBytes: maxBytes });
+      } catch (err) {
+        if (err.code !== 'AVM2_ABC_INVALID') throw err;
+        block.error = err;
+      }
+    }
+    if (block.error) throw block.error;
+    return block.parsed;
+  };
   /* Browser only. Decodes every bitmap character, at most BITMAP_DECODE_CONCURRENCY at a time to bound the
      memory held by inflated buffers; failures are reported and leave the bitmap undrawn. Bitmaps are taken in
      character id order from one pixel budget, limits = { maxPixels (per bitmap), remaining (all of them) }, so

@@ -45,7 +45,7 @@
   var REASON_INDEXED = 'Indexed only: offsets and raw bytes are available through getTagData(); the body is not decoded yet.';
   var REASON_UNKNOWN = 'Unknown tag code; skipped using its declared length.';
   var REASON_AVM1 = 'AVM1 bytecode detected; the reader only indexes it and never runs it. RetroFlash.Player runs it with its own AVM1 interpreter and reports separately what it cannot run.';
-  var REASON_AVM2 = 'AVM2 (ActionScript 3) bytecode detected; it is never executed.';
+  var REASON_AVM2 = 'AVM2 (ActionScript 3) bytecode detected; the reader only indexes it and it is never executed here. RetroFlash.Player runs a small subset of it with its own AVM2 interpreter and reports separately what it cannot run.';
   var UNPARSED_REASONS = {
     clipActions: 'AVM1 clip event actions that could not be read; they never run.',
     filterList: 'Filter list could not be read (unknown filter id or truncated); it and the optional fields after it are left unparsed.',
@@ -161,6 +161,16 @@
     if (stop >= this.end) fail('TRUNCATED_DATA', (what || 'STRING') + ' at byte ' + at + ' has no null terminator', at);
     this.bitPos = (stop + 1) * 8;
     return decodeString(this.bytes.subarray(at, stop), version);
+  };
+  // EncodedU32: 1 to 5 bytes, 7 bits each, low bits first (DefineSceneAndFrameLabelData).
+  BitReader.prototype.readEncodedU32 = function (what) {
+    var value = 0;
+    for (var i = 0; i < 5; i++) {
+      var b = this.readUI8(what || 'EncodedU32');
+      value += (b & 0x7f) * Math.pow(2, 7 * i);
+      if (!(b & 0x80)) break;
+    }
+    return value % 4294967296;
   };
   BitReader.prototype.readRGB = function (what) {
     what = what || 'RGB';
@@ -984,6 +994,22 @@
       r.skipRemaining();
       return f;
     },
+    // SymbolClass: the ActionScript 3 class of characters; character 0 is the main timeline (document class).
+    76: function (r, ctx) {
+      var count = r.readUI16('SymbolClass.NumSymbols'), symbols = [];
+      for (var i = 0; i < count; i++) symbols.push({ characterId: r.readUI16('SymbolClass.Tag'), name: r.readString(ctx.version, 'SymbolClass.Name') });
+      return { symbols: symbols };
+    },
+    // DefineSceneAndFrameLabelData: scenes (first frame, 0-based) and frame labels of the main timeline.
+    86: function (r, ctx) {
+      var f = { scenes: [], labels: [] }, i, count = r.readEncodedU32('DefineSceneAndFrameLabelData.SceneCount');
+      if (count > r.remainingBytes()) fail('TRUNCATED_DATA', 'DefineSceneAndFrameLabelData declares ' + count + ' scenes', r.byteOffset());
+      for (i = 0; i < count; i++) f.scenes.push({ offset: r.readEncodedU32('Scene.Offset'), name: r.readString(ctx.version, 'Scene.Name') });
+      count = r.readEncodedU32('DefineSceneAndFrameLabelData.FrameLabelCount');
+      if (count > r.remainingBytes()) fail('TRUNCATED_DATA', 'DefineSceneAndFrameLabelData declares ' + count + ' frame labels', r.byteOffset());
+      for (i = 0; i < count; i++) f.labels.push({ frame: r.readEncodedU32('FrameLabel.FrameNum'), name: r.readString(ctx.version, 'FrameLabel.FrameLabel') });
+      return f;
+    },
     // DefineScalingGrid: the 9-slice grid of a sprite or button, in its own space (twips).
     78: function (r) { return { characterId: r.readUI16('DefineScalingGrid.CharacterId'), splitter: r.readRect() }; },
     // DefineFontAlignZones and CSMTextSettings only tune anti-aliasing; their bodies are kept opaque.
@@ -1031,6 +1057,16 @@
     if (code === 82) {
       ctx.codeTags.avm2++;
       tag.status = 'not-executed';
+      // DoABC: Flags (UI32, bit 0 kDoAbcLazyInitializeFlag), Name, then the ABC block from `abcStart`.
+      var abcReader = new BitReader(ctx.bytes, tag.dataOffset, tag.dataOffset + tag.length);
+      try {
+        var flags = abcReader.readUI32('DoABC.Flags');
+        tag.fields = { flags: flags, lazyInitialize: !!(flags & 1), name: abcReader.readString(ctx.version, 'DoABC.Name') };
+        tag.fields.abcStart = abcReader.byteOffset() - tag.dataOffset;
+      } catch (err) {
+        if (!isReaderError(err)) throw err;
+        diagnose(ctx, 'error', err.code, tag.name + ' at offset ' + tag.offset + ': ' + plainMessage(err), tag);
+      }
       return markUnsupported(ctx, 'actionscript:' + tag.name, REASON_AVM2, tag);
     }
     var decoder = DECODERS[code];

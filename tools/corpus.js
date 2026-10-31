@@ -2,7 +2,8 @@
 /* Compatibility corpus: runs SWF files through the reader and the player in Node and writes a reproducible
    matrix of what each file uses and where it falls short, by layer:
      parser  the reader (diagnostics, tags it does not decode),
-     vm      the AVM1 interpreter (budgets, malformed or unknown actions, uncaught throws),
+     vm      the AVM1 interpreter and the AVM2 subset (budgets, malformed or unknown actions and instructions,
+             uncaught throws and errors, ActionScript 3 features not implemented),
      api     built-in objects and policies (objects not implemented, navigation, loads, sound),
      render  drawing and text (characters or features not drawn),
      input   buttons and pointer handling.
@@ -39,7 +40,7 @@ function standInCanvas() {
 function layerOf(feature) {
   if (/^(tag:|actionscript:DoABC|timeline:)/.test(feature) || /^[A-Z]\w*\.\w+$/.test(feature)) return 'parser';
   if (feature === 'avm1:objectValue' || /^(sound|load|browser):/.test(feature)) return 'api';
-  if (/^avm1:/.test(feature)) return 'vm';
+  if (/^avm[12]:/.test(feature)) return 'vm';
   if (/^(render|text):/.test(feature)) return 'render';
   if (/^input:/.test(feature)) return 'input';
   return feature === 'actionscript:DoAction' || feature === 'actionscript:DoInitAction' ? null : 'parser';
@@ -107,10 +108,6 @@ async function analyze(bytes, name, { frames = 60, resources = null } = {}) {
   });
   swf.diagnostics.forEach((d) => note(d.code));
   swf.unsupported.forEach((u) => note(u.feature, u.count));
-  if (result.avm === 2) {
-    fail('vm', new Error('AVM2 (ActionScript 3) is not supported'));
-    return finish(result);
-  }
 
   const reported = new Map();
   const report = (feature) => reported.set(feature, (reported.get(feature) || 0) + 1);
@@ -148,6 +145,7 @@ async function analyze(bytes, name, { frames = 60, resources = null } = {}) {
     try { renderer.render(stage, root); } catch (err) { fail('render', err); }
   };
   try {
+    if (env.avm2) env.avm2.start(root); // ActionScript 3: the DoABC code and the document class, before frame 1
     root.gotoFrame(1);
     update();
     draw();

@@ -41,8 +41,9 @@
     else global.console.error('[RetroFlash.js] ' + message);
   }
   function logSwfDiagnostics(player, swf) {
+    // The AVM2 flag is not a problem when the player runs the movie's ActionScript 3 (avm2/).
     var unsupported = swf.unsupported || [], diagnostics = (swf.diagnostics || []).filter(function (entry) {
-      return entry.level !== 'info';
+      return entry.level !== 'info' && !(player.options.actions && entry.code === 'AVM2_DECLARED');
     });
     if (player.options.actions) unsupported = unsupported.filter(function (entry) { return !PLAYER_RUNS[entry.feature]; });
     unsupported.slice(0, 10).forEach(function (entry) { player.logUnsupported(entry); });
@@ -64,8 +65,9 @@
 
   var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1, navigate: 1, call: 1, fscommand: 1, callbacks: 1, interaction: 1 };
   var MAX_INTERACTION_LOG = 100;
-  // The reader lists ActionScript tags as unsupported (it never runs them); the player runs AVM1 itself.
-  var PLAYER_RUNS = { 'actionscript:DoAction': 1, 'actionscript:DoInitAction': 1 };
+  /* The reader lists ActionScript tags as unsupported (it never runs them); the player runs AVM1 itself, and
+     the AVM2 subset of avm2/, reporting at run time what it cannot run. */
+  var PLAYER_RUNS = { 'actionscript:DoAction': 1, 'actionscript:DoInitAction': 1, 'actionscript:DoABC': 1 };
 
   function Player(options) {
     options = options || {};
@@ -370,7 +372,12 @@
     this.env.scripts.clock = function () { return now() - started; }; // getTimer: milliseconds since the start
     this.root = new Clip(this.env, this.movie.root, 0, null);
     this.root.loop = this.options.loop;
-    setRootVariables(this.root, this.movieOptions.variables);
+    if (this.env.as3) {
+      // ActionScript 3: the DoABC code is loaded and the document class wraps the root before its first frame.
+      if (this.env.avm2) this.env.avm2.start(this.root);
+    } else {
+      setRootVariables(this.root, this.movieOptions.variables);
+    }
     this.root.gotoFrame(1);
     this.env.scripts.run();
     var previous = this.input;

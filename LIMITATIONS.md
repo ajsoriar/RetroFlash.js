@@ -2,7 +2,7 @@
 
 What RetroFlash.js does not do yet, or does only in part, grouped by subject. It covers SWFReader 0.6.0 and RetroFlash.Player 1.0.0-beta.2, as of 2026-10-31.
 
-Most of these are reported at run time in `player.getDiagnostics().unsupported`; the feature name appears in brackets. The supported features are summarized in [`README.md`](./README.md), and their verification is documented in [`tests/COMPATIBILITY.md`](./tests/COMPATIBILITY.md).
+Most of these are reported at run time in `player.getDiagnostics().unsupported`; the feature name appears in brackets. The supported features are summarized in [`docs/README.md`](./docs/README.md), and their verification is documented in [`tests/COMPATIBILITY.md`](./tests/COMPATIBILITY.md).
 
 ## File format and reader
 
@@ -12,7 +12,7 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 4. Filter lists are validated and skipped. Only the filter names are kept, not their parameters.
 5. `End`, and any tag after the last `ShowFrame`, report `frame = actualFrameCount + 1`.
 6. `DefineMorphShape` and `DefineMorphShape2` ignore their `Offset` field: the end edges are read right after the start edges.
-7. ActionScript 3 bytecode (`DoABC`) and its tags (`SymbolClass` and others) are only indexed, never run.
+7. The reader decodes the `DoABC` header, `SymbolClass`, and `DefineSceneAndFrameLabelData`, but never runs ActionScript 3; the player runs a small subset of it (item 63). Other ActionScript 3 tags (`Metadata`, `DefineBinaryData`, …) are only indexed.
 
 ## Playback and timing
 
@@ -119,7 +119,10 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 ## Video and ActionScript 3
 
 62. Video is not played: `DefineVideoStream` is placed but not drawn, `VideoFrame` is ignored, and `NetStream` is not implemented.
-63. ActionScript 3 (AVM2) movies do not run. Their bytecode is detected and reported [`actionscript:DoABC`].
+63. ActionScript 3 (AVM2) runs only in a small subset, enough for timeline movies with button handlers:
+    - supported: ABC 46.x; the document class and `SymbolClass` timeline classes (constructors, slots, methods, stage instances in their slots or as dynamic properties); `addFrameScript`; `MovieClip` `stop`, `play`, `gotoAndPlay`, `gotoAndStop`, `nextFrame`, `prevFrame`, `currentFrame`, and `totalFrames`; `EventDispatcher` listeners and `dispatchEvent`; the mouse events of buttons (`click`, `mouseDown`, `mouseUp`, `mouseOver`, `mouseOut`, `rollOver`, `rollOut`); `navigateToURL` (URL and window); and `ExternalInterface.call` with primitive values;
+    - not supported: `try`/`catch`, closures that need an activation, `arguments` and `...rest`, array and object literals, XML, `Vector`, interfaces, most of the Flash API (`Stage`, `TextField`, `Timer`, `Loader`, `URLLoader`, `Sound`, `Graphics`, …), player events such as `enterFrame` and `addedToStage` [`avm2:eventNotSent`], display objects created by scripts, the mouse events of sprites (only buttons send them), the capture phase, `ExternalInterface.addCallback`, `URLRequest` data and `POST` [`avm2:urlRequestData`], FlashVars (`loaderInfo.parameters`), and ActionScript 3 movies loaded into AVM1 movies;
+    - code that needs something missing stops that script, and the rest of the movie keeps playing. It is reported with the movie, method, and bytecode offset [`avm2:unsupportedOpcode`, `avm2:methodFlags`, `avm2:uncaughtError`, `avm2:budget`, `avm2:invalidAbc`, and others].
 
 ## Verification and quality
 

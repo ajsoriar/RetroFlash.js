@@ -201,7 +201,14 @@ These are covered in `unit/*.test.js`:
   - no loader (reported, the clip unchanged), a refused URL, `GET` reported as not sent, a loader that throws, data that is no SWF or image, a missing target; only the latest load into a clip counts, even when an older one finishes last; at most 8 loads waiting;
   - the MovieClip methods `loadMovie`, `unloadMovie`, and `loadVariables` (with `POST`);
   - the Player: an invalid `loader` option, a load shown at once while paused and at the next frame while playing, content freed by `stop()`.
-- **Compatibility corpus** (`corpus.test.js`): the layer of each diagnostic; the version matrix below against Flash Player's rules (63 cells); the fixture matrix twice (identical runs) against its committed snapshot, with error messages compared by layer only because the zlib wording differs between Node versions; a rejected file failing in the parser layer, an ActionScript 3 movie in the vm layer, and an unknown action and a `GetURL` landing in the vm and api layers. Loads (`load:`) are in the api layer.
+- **ActionScript 3** (`avm2.test.js`; SWF 9 movies and ABC blocks built in memory with `support/avm2-asm.js`, a writer independent of the parser; a host that records requests instead of a browser):
+  - the reader's `DoABC` header, `SymbolClass`, and `DefineSceneAndFrameLabelData` (scene labels join the root labels);
+  - the ABC parser: names, classes, traits, and decoded instructions; malformed blocks refused before anything runs (truncation, version 47, a count larger than the bytes left, `maxAbcBytes`, a multiname outside the pool, a branch into an operand, a register past the local count, an unknown opcode);
+  - the document class built on the root, stage instances in its declared slots, `addFrameScript` scripts at their frames, and `stop()`;
+  - button clicks: `CLICK` listeners calling `navigateToURL(new URLRequest(...), "_self")` and `ExternalInterface.call` through the host, a listener of the Player's `navigate` event cancelling, a click outside every button, the interaction log; `ExternalInterface` without a host (Error #2067); `actions: false`;
+  - a `SymbolClass` sprite whose constructor adds a frame script that loops with `gotoAndPlay(label)`;
+  - failures reported with the movie, method, and bytecode offset while the timeline goes on: an unsupported instruction, an uncaught `ReferenceError`, a malformed block (the root then stays a plain `MovieClip`), an endless loop stopped by `maxActionSteps`, and recursion stopped by `maxCallDepth`.
+- **Compatibility corpus** (`corpus.test.js`): the layer of each diagnostic; the version matrix below against Flash Player's rules (63 cells); the fixture matrix twice (identical runs) against its committed snapshot, with error messages compared by layer only because the zlib wording differs between Node versions; a rejected file failing in the parser layer, an uncaught ActionScript 3 error in the vm layer, and an unknown action and a `GetURL` landing in the vm and api layers. Loads (`load:`) are in the api layer.
 - **Text** (`text.test.js`, SWFs built in memory):
   - a DefineFont whose codes, name, and style come from DefineFontInfo;
   - a DefineText without its end byte (`TEXT_END_MISSING`), and a DefineFont2 glyph offset past the tag (`INVALID_OFFSET`, tag invalid);
@@ -219,7 +226,7 @@ These are covered in `unit/*.test.js`:
 | Layer | What lands there |
 |---|---|
 | Parser | Reader diagnostics, tags the reader does not decode, `timeline:` placement errors, files it rejects |
-| VM | The AVM1 interpreter: budgets, malformed or unknown actions, unknown names and values, uncaught throws; ActionScript 3 movies |
+| VM | The AVM1 interpreter: budgets, malformed or unknown actions, unknown names and values, uncaught throws; the AVM2 subset: malformed ABC, instructions and features it does not implement, uncaught errors, budgets |
 | API | Built-in objects not implemented (`avm1:objectValue`), page interactions without a host or refused by it (`browser:`), sounds that cannot be played (`sound:`; the corpus plays them into a silent output) |
 | Render | Characters or features not drawn (`render:`, `text:`), exceptions while drawing |
 | Input | Buttons and pointer handling |
@@ -248,10 +255,10 @@ The matrix of the project's fixtures is committed as [`corpus/fixtures-matrix.md
 
 | Status | Tags |
 |---|---|
-| Decoded | `DefineShape`, `DefineShape2`, `DefineShape3`, `DefineShape4`, `DefineMorphShape`, `DefineMorphShape2`, `DefineBits`, `JPEGTables`, `DefineBitsJPEG2`, `DefineBitsJPEG3`, `DefineBitsJPEG4`, `DefineBitsLossless`, `DefineBitsLossless2` (headers; the player decodes the pixels), `DefineButton`, `DefineButton2`, `DefineButtonCxform`, `DefineButtonSound`, `DefineSound` (format and data offset; the player decodes the samples), `StartSound`, `StartSound2`, `SoundStreamHead`, `SoundStreamHead2`, `SoundStreamBlock` (read by the player), `DefineFont`, `DefineFont2`, `DefineFont3`, `DefineFontInfo`, `DefineFontInfo2`, `DefineFontName`, `DefineFontAlignZones` and `CSMTextSettings` (ids and mode bits only), `DefineFont4` (font file offset; the player loads the file), `DefineScalingGrid`, `DefineText`, `DefineText2`, `DefineEditText`, `End`, `ShowFrame`, `SetBackgroundColor`, `FrameLabel`, `FileAttributes`, `PlaceObject`, `PlaceObject2`, `PlaceObject3`, `RemoveObject`, `RemoveObject2`, `DefineSprite` (SpriteID, FrameCount, and recursive control tags) |
+| Decoded | `DefineShape`, `DefineShape2`, `DefineShape3`, `DefineShape4`, `DefineMorphShape`, `DefineMorphShape2`, `DefineBits`, `JPEGTables`, `DefineBitsJPEG2`, `DefineBitsJPEG3`, `DefineBitsJPEG4`, `DefineBitsLossless`, `DefineBitsLossless2` (headers; the player decodes the pixels), `DefineButton`, `DefineButton2`, `DefineButtonCxform`, `DefineButtonSound`, `DefineSound` (format and data offset; the player decodes the samples), `StartSound`, `StartSound2`, `SoundStreamHead`, `SoundStreamHead2`, `SoundStreamBlock` (read by the player), `DefineFont`, `DefineFont2`, `DefineFont3`, `DefineFontInfo`, `DefineFontInfo2`, `DefineFontName`, `DefineFontAlignZones` and `CSMTextSettings` (ids and mode bits only), `DefineFont4` (font file offset; the player loads the file), `DefineScalingGrid`, `DefineText`, `DefineText2`, `DefineEditText`, `End`, `ShowFrame`, `SetBackgroundColor`, `FrameLabel`, `FileAttributes`, `SymbolClass`, `DefineSceneAndFrameLabelData`, `PlaceObject`, `PlaceObject2`, `PlaceObject3`, `RemoveObject`, `RemoveObject2`, `DefineSprite` (SpriteID, FrameCount, and recursive control tags) |
 | Partial | Filter lists are validated and skipped; only the filter names are kept. Unreadable clip actions or filter lists leave a placement `partial` |
-| Detected, not interpreted by the reader | `DoAction`, `DoInitAction` (run by the player), `DoABC` (AVM2, never executed) |
-| Indexed only (offsets + `getTagData`) | Every other named tag: video, `SymbolClass`, `Metadata`, … |
+| Detected, not interpreted by the reader | `DoAction`, `DoInitAction` (run by the player), `DoABC` (flags and name decoded; the player runs a subset of its ActionScript 3, see `LIMITATIONS.md`) |
+| Indexed only (offsets + `getTagData`) | Every other named tag: video, `Metadata`, `DefineBinaryData`, … |
 | Unknown | Any code missing from `SWFReader.tagNames`; skipped using its declared length |
 | Rejected | `ZWS` files (LZMA) |
 

@@ -10,6 +10,7 @@
   "text/layout.js",
   "avm1/decoder.js","avm1/values.js","avm1/properties.js","avm1/objects.js","avm1/variables.js","avm1/external.js","avm1/globals.js",
   "avm1/interpreter.js",
+  "avm2/abc.js","avm2/runtime.js","avm2/api.js",
   "audio/codecs.js",
   "audio/mixer.js",
   "display/movie.js",

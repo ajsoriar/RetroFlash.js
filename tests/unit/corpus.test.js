@@ -6,6 +6,7 @@ const path = require('path');
 const { test, assert } = require('../support/harness');
 const { FIXTURE_DIR } = require('../fixtures/build-fixtures');
 const B = require('../support/swf-builder');
+const { AbcBuilder, timelineClass } = require('../support/avm2-asm');
 const corpus = require('../../tools/corpus');
 const { VERSIONS, PROBES, EXPECTED, versionMatrix } = require('../corpus/versions');
 
@@ -18,7 +19,7 @@ test('layerOf: each diagnostic belongs to one layer', () => {
   const cases = {
     'tag:Unknown_1000': 'parser', 'actionscript:DoABC': 'parser', 'PlaceObject2.clipActions': 'parser',
     TRUNCATED_DATA: 'parser', MISSING_END: 'parser',
-    'avm1:Unknown_0x99': 'vm', 'avm1:maxActionSteps': 'vm', 'avm1:uncaughtThrow': 'vm',
+    'avm1:Unknown_0x99': 'vm', 'avm1:maxActionSteps': 'vm', 'avm1:uncaughtThrow': 'vm', 'avm2:unsupportedOpcode': 'vm', 'avm2:budget': 'vm',
     'browser:noHost': 'api', 'browser:callFailed': 'api', 'avm1:objectValue': 'api', 'sound:DefineSound': 'api', 'load:noLoader': 'api', 'load:failed': 'api',
     'render:blendMode': 'render', 'render:missingCharacter': 'render', 'text:input': 'render',
     'input:keyPress': 'input', 'actionscript:DoAction': null, 'actionscript:DoInitAction': null
@@ -58,15 +59,18 @@ test('Classification: a file the reader rejects fails in the parser layer', asyn
   ['vm', 'api', 'render', 'input'].forEach((l) => assert.strictEqual(r.layers[l].status, 'ok'));
 });
 
-test('Classification: an ActionScript 3 movie fails in the vm layer', async () => {
+test('Classification: an ActionScript 3 movie runs; its uncaught errors are vm diagnostics', async () => {
+  const abc = new AbcBuilder();
+  timelineClass(abc, { pkg: 'demo', name: 'Main', frames: { 0: 'frame1' }, methods: { frame1: [['getlex', abc.name('missing')], ['returnvoid']] } });
   const bytes = B.swf({ version: 10, frameCount: 1, tags: [
-    B.tag(B.T.FileAttributes, B.body((w) => w.u32(0x08))), B.tag(B.T.ShowFrame), B.tag(B.T.End)
+    B.tag(B.T.FileAttributes, B.body((w) => w.u32(0x08))), B.tag(B.T.DoABC, B.body((w) => w.u32(1).string('').raw(abc.bytes()))),
+    B.tag(76, B.body((w) => w.u16(1).u16(0).string('demo.Main'))), B.tag(B.T.ShowFrame), B.tag(B.T.End)
   ] });
   const r = await corpus.analyze(bytes, 'as3.swf');
   assert.strictEqual(r.avm, 2);
-  assert.strictEqual(r.status, 'failed');
-  assert.strictEqual(r.layers.vm.status, 'failed');
-  assert.deepStrictEqual(r.layers.parser.features, { AVM2_DECLARED: 1 });
+  assert.strictEqual(r.status, 'degraded');
+  assert.deepStrictEqual(r.layers.parser.features, { AVM2_DECLARED: 1, 'actionscript:DoABC': 1 });
+  assert.deepStrictEqual(r.layers.vm, { status: 'degraded', features: { 'avm2:uncaughtError': 1 } });
 });
 
 test('Classification: unknown actions are vm diagnostics, URLs are api diagnostics', async () => {

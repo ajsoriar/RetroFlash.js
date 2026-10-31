@@ -2,6 +2,11 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
+## Unreleased
+
+- Added a minimal ActionScript 3 (AVM2) runtime: ABC parsing with checks before anything runs, document and `SymbolClass` timeline classes, `addFrameScript`, timeline control, button mouse events, `navigateToURL`, and `ExternalInterface.call` through the host page. Unsupported code is reported with its method and bytecode offset. See [known limitations](./LIMITATIONS.md).
+- The reader decodes `SymbolClass`, `DefineSceneAndFrameLabelData`, and the `DoABC` header.
+
 ## 1.0.0-beta.2 — 2026-10-31
 
 - Added a minimal browser-only npm package and automated GitHub Release publishing with provenance.

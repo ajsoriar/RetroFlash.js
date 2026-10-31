@@ -37,7 +37,8 @@
      the limits (resolveLimits), `instances` (sprite and button instances created in the current step; the
      player resets it at each tick, seek and input event), `scripts`, the movie's ActionScheduler, and `loads`,
      its LoadQueue (display/loader.js), `host`, the HostBridge to the page (avm1/external.js), and `audio`, the
-     player's AudioController (audio/mixer.js). options: { limits, actions, loader, maxFileBytes, host, dispatch,
+     player's AudioController (audio/mixer.js). An ActionScript 3 movie has `as3` set and, unless scripts are
+     off, `avm2`, its Avm2Movie (avm2/api.js). options: { limits, actions, loader, maxFileBytes, host, dispatch,
      audio } (actions: false queues no scripts; loader: the host page's loader function; host: the Player option
      `host`; dispatch: the Player's cancelable events; audio: an AudioController, by default a silent one). */
   function createEnv(movie, report, options) {
@@ -46,12 +47,15 @@
     var scripts = new ActionScheduler(movie.swf, report, limits, options.actions);
     scripts.host = new M.HostBridge(options.host, report, options.dispatch, options.interaction);
     scripts.audio = options.audio || new M.AudioController(null, report, limits);
-    return {
+    var env = {
       characters: movie.characters, exports: movie.exports || Object.create(null), swf: movie.swf, version: movie.swf.version, url: '',
       report: report, limits: limits, instances: 0, instanceNames: 0, input: null, initActions: new Set(),
-      scripts: scripts, host: scripts.host, audio: scripts.audio,
+      scripts: scripts, host: scripts.host, audio: scripts.audio, as3: !!movie.actionScript3, avm2: null,
       loads: M.LoadQueue ? new M.LoadQueue(options.loader, report, limits, options.maxFileBytes, options.interaction) : null
     };
+    // ActionScript 3 movies run their DoABC code instead of AVM1 actions (none with actions: false).
+    if (env.as3 && options.actions !== false) env.avm2 = new M.Avm2Movie(env, movie);
+    return env;
   }
   /* The context of a movie or image loaded into a clip: its own dictionary, exports, SWF version and URL; the
      rest (scripts, loads, limits, instance counts, input and dragging state) is the main movie's. */
@@ -63,7 +67,7 @@
     });
     return Object.assign(child, {
       main: main, characters: movie.characters, exports: movie.exports, swf: movie.swf, version: movie.swf.version, url: url,
-      initActions: new Set()
+      initActions: new Set(), as3: !!movie.actionScript3, avm2: null
     });
   }
   // A movie with nothing in it (an emptied clip, or an image), standing in for a SWF file of `version`.
@@ -102,9 +106,11 @@
     } else if (character.type === 'sprite') {
       obj.clip = new Clip(env, character, level + 1, this);
       obj.clip.object = obj;
+      if (env.avm2) env.avm2.created(obj, this);
       obj.clip.gotoFrame(1);
     } else if (character.type === 'button') {
       obj.button = new M.ButtonInstance(this, character, level + 1, ancestry.concat(characterId));
+      if (env.avm2) env.avm2.created(obj, this);
     } else if (character.type === 'editText') {
       if (character.field.variableName) bindTextField(this, obj);
       if (!character.field.readOnly) env.report('text:input', 'Input text fields are drawn but cannot be edited yet.', characterId);
@@ -233,9 +239,14 @@
     this.queueFrameActions(n);
   };
   /* The scripts of the frame just entered run after the current tick, in queue order: first the DoInitAction
-     scripts met for the first time in the movie (run on the root timeline, once), then the DoAction scripts. */
+     scripts met for the first time in the movie (run on the root timeline, once), then the DoAction scripts.
+     An ActionScript 3 movie runs no AVM1 actions: its frame scripts are the ones added by addFrameScript. */
   Clip.prototype.queueFrameActions = function (n) {
     var env = this.env, init = [], root = this.root();
+    if (env.as3) {
+      if (env.avm2) env.avm2.frameEntered(this, n);
+      return;
+    }
     this.def.frames[n - 1].forEach(function (tag) {
       if (tag.code !== 59 || env.initActions.has(tag) || tag.length < 2) return;
       env.initActions.add(tag);

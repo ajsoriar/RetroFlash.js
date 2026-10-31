@@ -15,10 +15,11 @@
     maxBitmapPixels: 4096 * 4096,           // pixels of one bitmap
     maxTotalBitmapPixels: 4 * 4096 * 4096,  // pixels of all bitmaps of a movie together (about 256 MB of RGBA)
     maxAudioSamples: 64 * 1024 * 1024,      // decoded sound samples of a movie together (about 256 MB as 32-bit floats)
-    maxActionBlocks: 10000,                 // AVM1 action blocks run per tick or input event
-    maxActionSteps: 100000,                 // AVM1 actions executed per tick or input event
-    maxActionStack: 100000,                 // values on the stack of one AVM1 action block
-    maxCallDepth: 256                       // nested AVM1 function calls (Flash Player also stops at 256)
+    maxActionBlocks: 10000,                 // AVM1 action blocks and AVM2 tasks run per tick or input event
+    maxActionSteps: 100000,                 // AVM1 actions and AVM2 instructions executed per tick or input event
+    maxActionStack: 100000,                 // values on the stack of one AVM1 action block or AVM2 method
+    maxCallDepth: 256,                      // nested AVM1 function calls (Flash Player also stops at 256); AVM2 calls too
+    maxAbcBytes: 16 * 1024 * 1024           // bytes of one DoABC block (ActionScript 3 bytecode)
   });
 
   function playerError(code, message) {

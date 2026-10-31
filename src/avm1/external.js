@@ -1,6 +1,6 @@
 /* RetroFlash.js - What a movie asks of the page that embeds it: getURL to a window, javascript: URLs,
    FSCommand and ExternalInterface. The player never navigates, runs page code or fetches anything itself: every
-   request goes to the host page's `host` object (see src/README.md, "Browser interaction"), after the Player's
+   request goes to the host page's `host` object, after the Player's
    cancelable events. A javascript: URL is never evaluated: it is read as calls of page functions by name with
    literal arguments, and anything else is handed to the host as text it may refuse. */
 (function (global) {

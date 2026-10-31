@@ -1,16 +1,16 @@
 # RetroFlash.js
 
 <p align="center">
-  <img src="./assets/RetroFlashJS.svg" alt="RetroFlash.js" width="720">
+  <img src="./assets/RetroFlashJS.svg" alt="RetroFlash.js" width="500" style="max-width:100%">
 </p>
 
-[![CI](./assets/badges/ci.svg)](https://github.com/ajsoriar/RetroFlash.js/actions/workflows/ci.yml)
+[![CI](https://github.com/ajsoriar/RetroFlash.js/actions/workflows/ci.yml/badge.svg)](https://github.com/ajsoriar/RetroFlash.js/actions/workflows/ci.yml)
 [![MIT License](./assets/badges/license.svg)](./LICENSE)
 ![Version](./assets/badges/version.svg)
 ![Runtime dependencies](./assets/badges/dependencies.svg)
 ![Bundle size](./assets/badges/bundle.svg)
 
-> **Beta release:** `1.0.0-beta.1`. The player is usable, but its API and SWF compatibility may change before `1.0.0`. Review the [known limitations](./LIMITATIONS.md) before choosing it for a project.
+> **Beta release:** `1.0.0-beta.2`. The player is usable, but its API and SWF compatibility may change before `1.0.0`. Review the [known limitations](./LIMITATIONS.md) before choosing it for a project.
 
 **RetroFlash.js** is an open-source Flash SWF player and ActionScript runtime designed to bring classic Flash content back to life in modern web browsers. Built entirely with vanilla JavaScript and HTML5 Canvas, it aims to reproduce original Flash animations, interactive applications, and games without requiring plugins, WebAssembly, or external dependencies. Its primary goal is to provide a lightweight, self-contained, drop-in replacement for the original Flash Player, allowing existing SWF content to run with minimal or no changes to the original HTML markup.
 
@@ -60,7 +60,7 @@ An existing page can keep its Flash markup:
 Add the bundle:
 
 ```html
-<script src="node_modules/retroflash.js/dist/retroflash-1.0.0-beta.1.min.js"></script>
+<script src="node_modules/retroflash.js/dist/retroflash-1.0.0-beta.2.min.js"></script>
 ```
 
 After publication, install the beta from npm with `npm install retroflash.js@beta`.
@@ -98,7 +98,7 @@ RetroFlash.js plays SWF animations on Canvas 2D:
   - control flow: `if`/`else` and loops (bounded per frame), `return`, and `ifFrameLoaded`;
   - functions, closures, objects and arrays, classes (`new`, prototypes, `extends`, `super`), `with`, `try`/`catch`/`finally`, `for..in`, the built-in `Object`, `Array`, `String`, `Number`, `Boolean`, `Math` and `Error`, and the `MovieClip` methods (`_root.gotoAndPlay("label")`);
   - game APIs: clip events (`onClipEvent`, `onEnterFrame`, `onPress`, …), `Key` and `Mouse` with listeners, timers (`setInterval`, `getTimer`), dragging, `hitTest`, `attachMovie`, `createEmptyMovieClip`, `swapDepths`, `Color`, `Stage`, `Sound` (library sounds and `loadSound`), and `DoInitAction`;
-  - `loadMovie`, `unloadMovie`, and `loadVariables` into clips: other SWF files and JPEG, PNG, or GIF images. The host page gives them through the `loader` option (see [`src/README.md`](./src/README.md#loading-into-clips)); legacy `<object>`/`<embed>` markup in the bundle gets a browser loader automatically, under CORS.
+  - `loadMovie`, `unloadMovie`, and `loadVariables` into clips: other SWF files and JPEG, PNG, or GIF images. The host page gives them through the `loader` option; legacy `<object>`/`<embed>` markup in the bundle gets a browser loader automatically, under CORS.
 
 The `tests/fixtures/valid/fws-game.swf` mini game (a hero moved with the arrow keys, a score) plays in the player. What is not supported yet, such as editable input fields, filters, blend modes, video, and ActionScript 3, is listed in [`LIMITATIONS.md`](./LIMITATIONS.md) and reported at run time in `getDiagnostics().unsupported`.
 
@@ -106,17 +106,17 @@ The code lives in [`src/`](./src/) as classic scripts with no dependencies:
 
 | File | Role |
 |---|---|
-| `src/swf-reader.js` | Parser (`SWFReader`, v0.6): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, filter lists, clip actions, and exports, and `inflate` |
+| `src/swf-reader.js` | Parser (`SWFReader`, v0.6.0): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, filter lists, clip actions, and exports, and `inflate` |
 | `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/audio/`, `src/input/`, `src/render/`, `src/browser/` | Player modules, including automatic playback of legacy Flash markup |
-| `src/retroflash.js` | Player API (`RetroFlash`, v1.0.0-beta.1) |
+| `src/retroflash.js` | Player API (`RetroFlash`, v1.0.0-beta.2) |
 | `src/modules.json` | The load order of every script above |
 
-For use, build the single file `dist/retroflash-1.0.0-beta.1.min.js`, which holds the reader and the player (see [Build](#build)):
+For use, build the single file `dist/retroflash-1.0.0-beta.2.min.js`, which holds the reader and the player (see [Build](#build)):
 
 ```html
 <canvas id="stage"></canvas>
 <input id="file" type="file" accept=".swf">
-<script src="dist/retroflash-1.0.0-beta.1.min.js"></script>
+<script src="dist/retroflash-1.0.0-beta.2.min.js"></script>
 <script>
   const player = new RetroFlash.Player({ canvas: document.getElementById('stage') });
   document.getElementById('file').addEventListener('change', async (event) => {
@@ -131,7 +131,7 @@ During development, the source scripts can be loaded directly instead, in the or
 - [`demo/player.html`](./demo/player.html): the player;
 - [`demo/index.html`](./demo/index.html): the structure inspector.
 
-The API is documented in [`src/README.md`](./src/README.md), and its limitations in [`LIMITATIONS.md`](./LIMITATIONS.md).
+See [`LIMITATIONS.md`](./LIMITATIONS.md) for current compatibility gaps.
 
 ## Requirements
 
@@ -157,7 +157,7 @@ Run the corpus only on SWF files you are allowed to use, and never commit third-
 
 ```sh
 npm install      # once: installs terser, the only development dependency
-npm run build    # writes dist/retroflash-1.0.0-beta.1.min.js and its source map
+npm run build
 npm run test:dist
 ```
 
@@ -172,3 +172,23 @@ See [`CHANGELOG.md`](./CHANGELOG.md).
 ## License
 
 RetroFlash.js is released under the [MIT License](./LICENSE).
+
+## AI-Assisted Development
+
+This project was developed extensively using AI-assisted coding tools, including **ChatGPT, OpenAI Codex, Anthropic Claude, GitHub Copilot, OpenCode, and DeepSeek**, integrated into **Visual Studio Code**.
+
+AI was primarily responsible for generating source code, implementation details, and documentation, under human direction and supervision.
+
+<p align="center">
+  <img src="./assets/badges/ai-assisted-chatgpt.svg" alt="AI assisted: ChatGPT" height="20">
+  &nbsp;&nbsp;
+  <img src="./assets/badges/ai-assisted-claude.svg" alt="AI assisted: Claude" height="20">
+  &nbsp;&nbsp;
+  <img src="./assets/badges/ai-assisted-codex.svg" alt="AI assisted: Codex" height="20">
+  &nbsp;&nbsp;
+  <img src="./assets/badges/ai-assisted-github-copilot.svg" alt="AI assisted: GitHub Copilot" height="20">
+  &nbsp;&nbsp;
+  <img src="./assets/badges/ai-assisted-opencode.svg" alt="AI assisted: OpenCode" height="20">
+  &nbsp;&nbsp;
+  <img src="./assets/badges/ai-assisted-deepseek.svg" alt="AI assisted: DeepSeek" height="20">
+</p>

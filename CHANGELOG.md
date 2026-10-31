@@ -2,6 +2,11 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
+## 1.0.0-beta.2 — 2026-10-31
+
+- Added a minimal browser-only npm package and automated GitHub Release publishing with provenance.
+- Updated release documentation and refreshed project badges.
+
 ## 1.0.0-beta.1 — 2026-10-28
 
 - Added automatic playback for legacy `<object>` and `<embed>` elements, browser navigation and page communication, and CORS-aware external loading.

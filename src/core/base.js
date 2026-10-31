@@ -6,7 +6,7 @@
   // Modules register their exports here; retroflash.js removes the global once everything is loaded.
   var M = global.RetroFlashModules = {};
 
-  var VERSION = '1.0.0-beta.1';
+  var VERSION = '1.0.0-beta.2';
 
   // Default budgets against hostile files. Each one can be set by the Player option of the same name.
   var DEFAULT_LIMITS = Object.freeze({

@@ -1,4 +1,4 @@
-# Compatibility report — SWFReader 0.6.0 · RetroFlash 1.0.0-beta.1
+# Compatibility report — SWFReader 0.6.0 · RetroFlash 1.0.0-beta.2
 
 This file lists only what the tests demonstrate. Anything that is not listed here is unverified.
 

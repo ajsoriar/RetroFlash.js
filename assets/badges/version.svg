@@ -1,7 +1,7 @@
-﻿<svg xmlns="http://www.w3.org/2000/svg" width="162" height="20" role="img" aria-label="version: 1.0.0-beta.1">
-  <title>version: 1.0.0-beta.1</title>
-  <rect width="162" height="20" rx="3" fill="#555"/>
-  <path fill="#df8b18" d="M58 0h101a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H58z"/>
-  <text x="29" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">version</text>
-  <text x="109" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">1.0.0-beta.1</text>
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="162" height="20" role="img" aria-label="version: 1.0.0-beta.2">
+  <title>version: 1.0.0-beta.2</title><defs><filter id="text-shadow" x="-20%" y="-30%" width="140%" height="180%"><feDropShadow dx="0" dy="0.45" stdDeviation="0.45" flood-color="#000" flood-opacity="0.45"/></filter><linearGradient id="panel-left" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#646464"/><stop offset="50%" stop-color="#555"/><stop offset="100%" stop-color="#4C4C4C"/></linearGradient><linearGradient id="panel-right" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#E2952D"/><stop offset="50%" stop-color="#df8b18"/><stop offset="100%" stop-color="#C97D16"/></linearGradient></defs>
+  <rect width="162" height="20" rx="3" fill="url(#panel-left)"/>
+  <path fill="url(#panel-right)" d="M58 0h101a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H58z"/>
+  <text filter="url(#text-shadow)" x="29" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">version</text>
+  <text filter="url(#text-shadow)" x="109" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">1.0.0-beta.2</text>
 </svg>

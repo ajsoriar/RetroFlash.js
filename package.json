@@ -1,6 +1,7 @@
 {
   "name": "retroflash.js",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
+  "private": true,
   "description": "Dependency-free Flash SWF player and ActionScript runtime for the browser (beta).",
   "license": "MIT",
   "repository": {
@@ -11,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/ajsoriar/RetroFlash.js/issues"
   },
-  "browser": "./dist/retroflash-1.0.0-beta.1.min.js",
+  "browser": "./dist/retroflash-1.0.0-beta.2.min.js",
   "publishConfig": {
     "tag": "beta"
   },
@@ -38,6 +39,8 @@
   ],
   "scripts": {
     "build": "node tools/build.js",
+    "package": "node tools/package.js",
+    "publish:npm": "npm test && npm run test:dist && npm run package && npm publish ./dist/npm-package",
     "test": "node tests/run.js",
     "test:dist": "node tools/build.js && node tests/run.js --dist",
     "prepack": "npm run build",

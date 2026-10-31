@@ -1,7 +1,7 @@
 ﻿<svg xmlns="http://www.w3.org/2000/svg" width="184" height="20" role="img" aria-label="runtime dependencies: none">
-  <title>runtime dependencies: none</title>
-  <rect width="184" height="20" rx="3" fill="#555"/>
-  <path fill="#4c1" d="M132 0h49a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3h-49z"/>
-  <text x="66" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">runtime dependencies</text>
-  <text x="158" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">none</text>
+  <title>runtime dependencies: none</title><defs><filter id="text-shadow" x="-20%" y="-30%" width="140%" height="180%"><feDropShadow dx="0" dy="0.45" stdDeviation="0.45" flood-color="#000" flood-opacity="0.45"/></filter><linearGradient id="panel-left" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#646464"/><stop offset="50%" stop-color="#555"/><stop offset="100%" stop-color="#4C4C4C"/></linearGradient><linearGradient id="panel-right" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#55D126"/><stop offset="50%" stop-color="#4c1"/><stop offset="100%" stop-color="#3DB80F"/></linearGradient></defs>
+  <rect width="184" height="20" rx="3" fill="url(#panel-left)"/>
+  <path fill="url(#panel-right)" d="M132 0h49a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3h-49z"/>
+  <text filter="url(#text-shadow)" x="66" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">runtime dependencies</text>
+  <text filter="url(#text-shadow)" x="158" y="14" fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">none</text>
 </svg>

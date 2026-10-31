@@ -4,7 +4,7 @@
    javascript: URLs and ExternalInterface, sends FSCommands to `<id>_DoFSCommand`, and loads what scripts load
    under the browser's CORS rules. The element's parameters are honoured: movie/src/data, base, FlashVars,
    allowScriptAccess, allowNetworking, bgcolor. Optional page settings: window.RetroFlashConfig (see
-   src/README.md, "Legacy markup"). */
+   the legacy object/embed markup API). */
 (function (global) {
   'use strict';
 

@@ -1,7 +1,7 @@
 'use strict';
 /* Version matrix: the same AVM1 bytecode, in a SWF of each version from 4 to 10, probes the behaviour that
    Flash Player changes with the SWF version. Each probe stores its result in a root variable; the table
-   lists them by version. EXPECTED holds Flash Player's rules (see src/README.md, "Values and operators");
+   lists them by version. EXPECTED holds Flash Player's rules;
    tests/unit/corpus.test.js checks the player against it. */
 const B = require('../support/swf-builder');
 const { push } = require('../support/avm1-asm');

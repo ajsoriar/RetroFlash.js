@@ -1,4 +1,4 @@
-/* SWFReader v0.5 - dependency-free SWF structure reader (browser classic script; also loadable from Node for tests).
+/* SWFReader v0.6.0 - dependency-free SWF structure reader (browser classic script; also loadable from Node for tests).
    API: const movie = await SWFReader.load(fileOrBuffer[, options]);
    SWFReader parses the header, the tag index (recursively inside DefineSprite) and a small set of tag bodies.
    It does NOT render and NEVER executes ActionScript. Anything it does not decode is reported in

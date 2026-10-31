@@ -1,4 +1,4 @@
-/* RetroFlash.js v1.0.0-beta.1 - SWF player (browser classic script): the public API, RetroFlash.Player.
+/* RetroFlash.js v1.0.0-beta.2 - SWF player (browser classic script): the public API, RetroFlash.Player.
    API: const player = new RetroFlash.Player({ canvas }); await player.load(file); player.play();
    Load swf-reader.js and the player modules first, in the order of src/modules.json, or load the single
    bundle dist/retroflash-<version>.min.js instead (npm run build).
@@ -77,9 +77,9 @@
     }
     if (options.volume !== undefined && !isVolume(options.volume)) throw playerError('INVALID_OPTION', 'options.volume must be a number from 0 to 1');
     this.canvas = options.canvas;
-    // host: what the movie asks of the page (navigate, call, fscommand, load, objectID; see src/README.md).
+    // host: handles page requests from the movie (navigate, call, fscommand, load, objectID).
     this.host = options.host || null;
-    // loader(request) gives the bytes of a URL a script loads, or null to refuse it (see src/README.md).
+    // loader(request) gives the bytes of a URL a script loads, or null to refuse it.
     this.loader = options.loader || (this.host && typeof this.host.load === 'function' ? this.host.load.bind(this.host) : null);
     this.movieOptions = {};
     this.options = {
@@ -109,7 +109,7 @@
     var self = this;
     this.report = function (feature, reason, source) { self.recordUnsupported(feature, reason, source); };
     this.renderer = new CanvasRenderer(this.canvas, this.report);
-    // audio: the backend that plays sounds (see src/README.md); false plays none. By default Web Audio, when
+    // audio: the backend that plays sounds; false plays none. By default Web Audio, when
     // the browser has it.
     var backend = options.audio === false ? null : options.audio || M.createWebAudioBackend();
     this.audio = new M.AudioController(backend, this.report, this.limits);

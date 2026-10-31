@@ -47,5 +47,5 @@ jobs:
             exit 1
           fi
 
-      - name: Check the publishable package contents
-        run: npm pack --dry-run
+      - name: Build the minimal npm package
+        run: npm run package

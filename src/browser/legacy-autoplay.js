@@ -128,6 +128,8 @@
     canvas.style.width = canvas.width + 'px';
     canvas.style.height = canvas.height + 'px';
     canvas.style.display = 'inline-block';
+    canvas.style.border = '0';
+    canvas.style.outline = 'none';
     canvas.style.backgroundColor = paramOf(element, 'bgcolor');
     canvas.setAttribute('role', 'img');
     canvas.setAttribute('aria-label', element.getAttribute('title') || 'Flash movie');

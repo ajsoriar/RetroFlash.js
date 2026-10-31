@@ -480,7 +480,7 @@
       ctx.strokeStyle = cssColor(style.color || style.fill.color, cx);
       ctx.stroke(pathOf(line));
     } else if (style.fill) {
-      this.strokeFill(character, line, cx);
+      this.strokeFill(character, line, cx, world);
     }
   };
   /* Stroke width in shape units. It is in twips and scales with the object; LINESTYLE2 NoHScale/NoVScale keep it
@@ -500,7 +500,7 @@
   /* A gradient or bitmap line fill (LINESTYLE2 HasFill): the stroke is drawn on a layer the size of the canvas,
      the fill is painted over it where the stroke is ('source-in'), and the layer is drawn on the canvas. Without
      a canvas for the layer, the stroke takes the fill's first colour and is reported. */
-  CanvasRenderer.prototype.strokeFill = function (character, line, cx) {
+  CanvasRenderer.prototype.strokeFill = function (character, line, cx, world) {
     var ctx = this.ctx, fill = line.style.fill, layer = this.layer();
     if (!layer) {
       this.report('render:lineFill', 'Gradient and bitmap line fills need a canvas for a layer; drawn with their first colour.', character.id);
@@ -512,7 +512,8 @@
     l.save();
     l.setTransform(1, 0, 0, 1, 0, 0);
     l.clearRect(0, 0, layer.width, layer.height);
-    l.setTransform(ctx.getTransform());
+    // `world` is the transform installed by drawShape; getTransform() is unavailable in older Canvas 2D APIs.
+    l.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
     ['lineWidth', 'lineCap', 'lineJoin', 'miterLimit'].forEach(function (k) { l[k] = ctx[k]; });
     l.strokeStyle = '#000';
     l.stroke(pathOf(line));

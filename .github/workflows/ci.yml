@@ -39,8 +39,7 @@ jobs:
       - name: Check the committed browser bundle is current
         run: |
           bundle="dist/retroflash-$(node -p "require('./package.json').version").min.js"
-          legacy="dist/retroflash-$(node -p "require('./package.json').version").legacy.min.js"
-          git ls-files --error-unmatch -- "$bundle" "$bundle.map" "$legacy" "$legacy.map"
+          git ls-files --error-unmatch -- "$bundle" "$bundle.map"
           changes="$(git status --porcelain --untracked-files=all -- dist/)"
           if [ -n "$changes" ]; then
             echo "$changes"

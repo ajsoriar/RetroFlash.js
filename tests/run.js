@@ -1,6 +1,6 @@
 'use strict';
-// Runs every tests/unit/*.test.js with the built-in harness. Usage: node tests/run.js [--dist [--legacy]] (Node 16+).
-// --dist tests the versioned bundle in dist/ (npm run build) instead of the source scripts; --legacy, its ES5 bundle.
+// Runs every tests/unit/*.test.js with the built-in harness. Usage: node tests/run.js [--dist] (Node 16+).
+// --dist tests the versioned ES5 browser bundle in dist/ (npm run build) instead of the source scripts.
 const fs = require('fs');
 const path = require('path');
 const { run, group } = require('./support/harness');

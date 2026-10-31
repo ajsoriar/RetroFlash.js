@@ -41,7 +41,7 @@
     "build": "node tools/build.js",
     "package": "node tools/package.js",
     "test": "node tests/run.js",
-    "test:dist": "node tools/build.js && node tests/run.js --dist && node tests/run.js --dist --legacy",
+    "test:dist": "node tools/build.js && node tests/run.js --dist",
     "prepack": "npm run build",
     "prepublishOnly": "npm run test:dist",
     "fixtures": "node tests/fixtures/build-fixtures.js",

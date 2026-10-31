@@ -24,7 +24,7 @@ function npmPack() {
 }
 
 async function packageNpm() {
-  const { bundleName, code, legacyBundleName, legacyCode } = await build();
+  const { bundleName, code } = await build();
   const pkg = require(path.join(root, 'package.json'));
   if (pkg.browser !== './dist/' + bundleName) {
     throw new Error('package: package.browser must point to the current versioned bundle');
@@ -36,7 +36,6 @@ async function packageNpm() {
   const bundle = code
     .replace(/(?:\r?\n)?\/\/[#@]\s*sourceMappingURL=.*(?:\r?\n)?$/, '\n');
   fs.writeFileSync(path.join(stage, 'dist', bundleName), bundle);
-  fs.writeFileSync(path.join(stage, 'dist', legacyBundleName), legacyCode.replace(/(?:\r?\n)?\/\/[#@]\s*sourceMappingURL=.*(?:\r?\n)?$/, '\n'));
   fs.copyFileSync(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE'));
   fs.writeFileSync(
     path.join(stage, 'README.md'),

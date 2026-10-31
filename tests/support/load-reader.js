@@ -25,12 +25,11 @@ if (typeof globalThis.DecompressionStream !== 'function') {
   };
 }
 
-// The source scripts in the order of src/modules.json or, with `--dist`, the bundle built by tools/build.js
-// (`--dist --legacy`: the ES5 legacy bundle).
+// The source scripts in the order of src/modules.json or, with `--dist`, the ES5 bundle built by tools/build.js.
 const root = path.join(__dirname, '..', '..');
 const useDist = process.argv.includes('--dist');
 const pkg = require(path.join(root, 'package.json'));
-const bundleName = 'retroflash-' + pkg.version + (process.argv.includes('--legacy') ? '.legacy' : '') + '.min.js';
+const bundleName = 'retroflash-' + pkg.version + '.min.js';
 const scripts = useDist ? [path.join(root, 'dist', bundleName)]
   : require(path.join(root, 'src', 'modules.json')).map((file) => path.join(root, 'src', file));
 if (useDist && !fs.existsSync(scripts[0])) throw new Error('dist/' + bundleName + ' not found: run npm install and npm run build first');

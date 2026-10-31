@@ -1,6 +1,6 @@
-/* RetroFlash.js legacy bundle: the ES2015+ library functions the player calls that Chrome 38 lacks. Babel only
-   rewrites syntax, so tools/build.js puts this file, unminified, before the legacy bundle. Each one is defined
-   only when missing and covers just what the player needs. */
+/* Browser compatibility prelude: ES2015+ functions the player calls that Chrome 38 lacks. Babel rewrites syntax
+   but does not add these polyfills, so tools/build.js includes this file before the browser bundle. Each one is
+   defined only when missing and covers just what the player needs. */
 (function () {
   'use strict';
   function define(owner, name, fn) {

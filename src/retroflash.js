@@ -1,4 +1,4 @@
-/* RetroFlash.js v1.0.0-beta.2 - SWF player (browser classic script): the public API, RetroFlash.Player.
+/* RetroFlash.js v1.0.0 - SWF player (browser classic script): the public API, RetroFlash.Player.
    API: const player = new RetroFlash.Player({ canvas }); await player.load(file); player.play();
    Load swf-reader.js and the player modules first, in the order of src/modules.json, or load the single
    bundle dist/retroflash-<version>.min.js instead (npm run build).

@@ -1,13 +1,13 @@
 # RetroFlash.js
 
-RetroFlash.js is a dependency-free Flash SWF player and ActionScript runtime for modern browsers. It plays SWF content on Canvas 2D and includes a controlled ActionScript 1/2 runtime.
+RetroFlash.js is a dependency-free Flash SWF player and ActionScript runtime for modern browsers. It plays SWF content on Canvas 2D with controlled ActionScript 1/2 support and a small ActionScript 3 subset.
 
-> **Beta:** The public API and SWF compatibility may change before the first stable release. Review the [known limitations](https://github.com/ajsoriar/RetroFlash.js/blob/main/LIMITATIONS.md) before choosing RetroFlash.js for a project.
+RetroFlash.js 1.0.0 is the first stable release. Review the [known limitations](https://github.com/ajsoriar/RetroFlash.js/blob/main/LIMITATIONS.md) for current SWF coverage.
 
 ## Install
 
 ```sh
-npm install retroflash.js@beta
+npm install retroflash.js
 ```
 
 ## Browser usage

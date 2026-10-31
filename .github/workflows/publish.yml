@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: npm-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Test and publish package
@@ -51,5 +55,38 @@ jobs:
       - name: Build the minimal npm package
         run: npm run package
 
+      - name: Check whether this version is already on npm
+        id: npm-version
+        shell: bash
+        run: |
+          version="$(node -p 'require("./dist/npm-package/package.json").version')"
+          package_spec="$(node -p 'require("./dist/npm-package/package.json").name')@$version"
+          error_log="$RUNNER_TEMP/npm-view-error.log"
+          # Published only when npm answers with this exact version. Some npm versions answer a missing version
+          # of an existing package with success and no output instead of E404; that also means "not published".
+          if registry_output="$(npm view "$package_spec" version --json 2>"$error_log")"; then
+            if [ "$registry_output" = "\"$version\"" ]; then
+              echo "already_published=true" >> "$GITHUB_OUTPUT"
+              echo "::notice::$package_spec already exists on npm; skipping duplicate publication."
+            elif [ -z "$registry_output" ]; then
+              echo "already_published=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "$registry_output"
+              echo "::error::npm answered with an unexpected version for $package_spec."
+              exit 1
+            fi
+          elif grep -q 'E404' "$error_log"; then
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$error_log"
+            echo "::error::Could not determine whether $package_spec exists on npm."
+            exit 1
+          fi
+
+      - name: Skip publication for an existing version
+        if: steps.npm-version.outputs.already_published == 'true'
+        run: echo "The exact package version is already present; all validation and packaging steps completed."
+
       - name: Publish with provenance
+        if: steps.npm-version.outputs.already_published != 'true'
         run: npm publish ./dist/npm-package --provenance --access public

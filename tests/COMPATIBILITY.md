@@ -1,4 +1,4 @@
-# Compatibility report — SWFReader 0.6.0 · RetroFlash 1.0.0
+# Compatibility report — SWFReader 0.6.0 · RetroFlash 1.0.1
 
 This file lists only what the tests demonstrate. Anything that is not listed here is unverified.
 
@@ -87,7 +87,7 @@ These are covered in `unit/*.test.js`:
 - **Bit reader:** RECT, MATRIX, CXFORM, and CXFORMWITHALPHA vectors worked out by hand from the specification, independently of the test writer; UB/SB/FB widths 0, 1, 17, and 32; sign extension; fields that span byte boundaries; alignment; reads never cross the reader's end; invalid widths and ranges; and 300 seeded random round trips that start unaligned.
 - **Limits:** `maxFileBytes` (for buffers and Blobs), `maxTags` (nested tags included), `maxSpriteDepth` 0 and 1, and option validation.
 - **API:** inputs as Uint8Array, ArrayBuffer, Buffer, DataView, and Blob; `getTagData` with valid tags (top-level and nested) and invalid ones; `walkTags`.
-- **Version-dependent behavior:** strings are Latin-1 before SWF 6 and UTF-8 from SWF 6; the FrameLabel named-anchor flag is read only from SWF 6; FileAttributes must be present and first from SWF 8; CWS in files older than SWF 6; the AVM2 flag; a stage RECT with min > max; CWS when `DecompressionStream` is missing (`CWS_UNSUPPORTED`).
+- **Version-dependent behavior:** strings are Latin-1 before SWF 6 and UTF-8 from SWF 6; the FrameLabel named-anchor flag is read only from SWF 6; FileAttributes must be present and first from SWF 8; CWS in files older than SWF 6; the AVM2 flag; a stage RECT with min > max; CWS when `DecompressionStream` is missing (decoded by the JavaScript zlib/DEFLATE fallback).
 - **Robustness** (`robustness.test.js`, SWFs built in memory):
   - a button that contains itself twice per level;
   - 25 distinct sprites that each place the next one twice (2^25 instances without limits): stopped by the instance budget in bounded time;

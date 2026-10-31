@@ -1,13 +1,13 @@
 # Limitations
 
-What RetroFlash.js does not do yet, or does only in part, grouped by subject. It covers SWFReader 0.6.0 and RetroFlash.Player 1.0.0, as of 2026-10-31.
+What RetroFlash.js does not do yet, or does only in part, grouped by subject. It covers SWFReader 0.6.0 and RetroFlash.Player 1.0.1, as of 2026-10-31.
 
 Most of these are reported at run time in `player.getDiagnostics().unsupported`; the feature name appears in brackets. The supported features are summarized in [`docs/README.md`](./docs/README.md), and their verification is documented in [`tests/COMPATIBILITY.md`](./tests/COMPATIBILITY.md).
 
 ## File format and reader
 
 1. `ZWS` files (LZMA compression, SWF 13 and later) are rejected (`ZWS_UNSUPPORTED`).
-2. `CWS` files (zlib) need the browser's `DecompressionStream`. There is no JavaScript fallback, so older browsers fail with `CWS_UNSUPPORTED`.
+2. `CWS` files (zlib) use the browser's `DecompressionStream` when available and a bounded JavaScript zlib/DEFLATE fallback otherwise. Malformed streams and output that exceeds the declared size are rejected.
 3. Strings in files older than SWF 6 used the author's locale encoding, which the file does not record. They are decoded as Latin-1.
 4. Filter lists are validated and skipped. Only the filter names are kept, not their parameters.
 5. `End`, and any tag after the last `ShowFrame`, report `frame = actualFrameCount + 1`.
@@ -127,7 +127,7 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 ## Verification and quality
 
 64. Pixel accuracy has not been compared with a reference player.
-65. Drawing is tested with stand-in canvases in Node, and checked by eye and by sampled pixels in headless Chrome only. Firefox, Safari, and mobile browsers have not been checked. The legacy bundle has been checked in Node and in a current Chrome with the newer APIs removed, not in a real Chrome 38; in browsers without `KeyboardEvent.key` (Chrome before 51), button `KeyPress` conditions do not fire.
+65. Drawing is tested with stand-in canvases in Node, and checked by eye and by sampled pixels in headless Chrome. The bundle has also been manually checked in Chrome 38 with the `test-005` pages, including the animated ball in `inicio.swf`. Firefox, Safari, and mobile browsers have not been checked. In browsers without `KeyboardEvent.key` (Chrome before 51), button `KeyPress` conditions do not fire.
 66. Sound has not been checked by ear. MP3 has been tested only with silent frames, because the project has no MP3 encoder.
 67. The corpus of real files is small: four authorized files of one kind (virtual tours).
 68. The reader and the player check bounds and limits against hostile files, and the tests include controlled fuzzing, but there has been no independent security review.

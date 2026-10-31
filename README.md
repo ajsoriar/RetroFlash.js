@@ -10,7 +10,7 @@
 ![Runtime dependencies](./assets/badges/dependencies.svg)
 ![Bundle size](./assets/badges/bundle.svg)
 
-**RetroFlash.js 1.0.0 is the first stable release.** Review the [known limitations](./LIMITATIONS.md) for current SWF and ActionScript coverage.
+**RetroFlash.js 1.0.1 is the current version. The first stable release was 1.0.0.** Review the [known limitations](./LIMITATIONS.md) for current SWF and ActionScript coverage.
 
 **RetroFlash.js** is an open-source Flash SWF player and ActionScript runtime designed to bring classic Flash content back to life in modern web browsers. Built entirely with vanilla JavaScript and HTML5 Canvas, it aims to reproduce original Flash animations, interactive applications, and games without requiring plugins, WebAssembly, or external dependencies. Its primary goal is to provide a lightweight, self-contained, drop-in replacement for the original Flash Player, allowing existing SWF content to run with minimal or no changes to the original HTML markup.
 
@@ -38,7 +38,7 @@ RetroFlash.js is built around a simple idea: **preserve the original Flash exper
 
 **Just JavaScript bringing Flash back to life.**
 
-*RetroFlash.js 1.0.0 is the first stable release. SWF and ActionScript support remains limited to the features documented here.*
+*RetroFlash.js 1.0.1 is the current version. The first stable release was 1.0.0. SWF and ActionScript support remains limited to the features documented here.*
 
 ## Non-Invasive Flash Recovery
 
@@ -60,7 +60,7 @@ An existing page can keep its Flash markup:
 Add the bundle:
 
 ```html
-<script src="node_modules/retroflash.js/dist/retroflash-1.0.0.min.js"></script>
+<script src="node_modules/retroflash.js/dist/retroflash-1.0.1.min.js"></script>
 ```
 
 Install the stable release from npm with `npm install retroflash.js`.
@@ -79,35 +79,40 @@ The code lives in [`src/`](./src/) as classic scripts with no dependencies:
 |---|---|
 | `src/swf-reader.js` | Parser (`SWFReader`, v0.6.0): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, filter lists, clip actions, and exports, and `inflate` |
 | `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/avm2/`, `src/audio/`, `src/input/`, `src/render/`, `src/browser/` | Player modules, including automatic playback of legacy Flash markup |
-| `src/retroflash.js` | Player API (`RetroFlash`, v1.0.0) |
+| `src/retroflash.js` | Player API (`RetroFlash`, v1.0.1) |
 | `src/modules.json` | The load order of every script above |
 
-For use, build the single file `dist/retroflash-1.0.0.min.js`, which holds the reader and the player (see [Build](#build)):
+For use, build the single file `dist/retroflash-1.0.1.min.js`, which holds the reader and the player (see [Build](#build)):
 
 ```html
 <canvas id="stage"></canvas>
 <input id="file" type="file" accept=".swf">
-<script src="dist/retroflash-1.0.0.min.js"></script>
+<script src="dist/retroflash-1.0.1.min.js"></script>
 <script>
-  const player = new RetroFlash.Player({ canvas: document.getElementById('stage') });
-  document.getElementById('file').addEventListener('change', async (event) => {
-    await player.load(event.target.files[0]);
-    player.play();
+  var player = new RetroFlash.Player({ canvas: document.getElementById('stage') });
+  document.getElementById('file').addEventListener('change', function (event) {
+    player.load(event.target.files[0]).then(function () {
+      player.play();
+    });
   });
 </script>
 ```
 
-During development, the source scripts can be loaded directly instead, in the order of `src/modules.json`. The demos do this, so they open directly, with no server and no build:
+During development, source scripts can be loaded directly in a modern browser, in the order of `src/modules.json`. Those source demos are not the Chrome 38-targeted distribution bundle:
 
 - [`demo/player.html`](./demo/player.html): the player;
 - [`demo/index.html`](./demo/index.html): the structure inspector.
 
 See [`LIMITATIONS.md`](./LIMITATIONS.md) for current compatibility gaps.
 
+## Compatibility
+
+The 1.0.1 browser bundle is built to run on Google Chrome 38 and later. SWF feature support depends on the coverage described in [`LIMITATIONS.md`](./LIMITATIONS.md).
+
 ## Requirements
 
 - **Playback:** a browser with Canvas 2D. Web Audio is optional and is used when available. Browser security rules, including CORS, govern external SWF and resource loads.
-- **Build and tests:** Node.js 16 or later. Building the bundles requires `npm install` for the development-only Terser and Babel dependencies; the player has no runtime dependencies.
+- **Build and tests:** Node.js 16 or later. Building the browser bundle requires `npm install` for the development-only Terser and Babel dependencies; the player has no runtime dependencies.
 
 ## Tests
 
@@ -132,7 +137,7 @@ npm run build
 npm run test:dist
 ```
 
-The build ([`tools/build.js`](./tools/build.js)) generates two versioned bundles from the scripts of `src/modules.json`: the regular minified bundle and an ES5-syntax legacy bundle targeting Chrome 38. Both include source maps, and the build checks that their version matches `RetroFlash.version`. Before anything is written, the sources and both bundles are loaded in isolated contexts. The legacy bundle starts with small polyfills ([`tools/legacy-polyfills.js`](./tools/legacy-polyfills.js): `Object.assign`, `Array.from`, `String.fromCodePoint`, typed-array `slice`). Both bundles fall back, where a browser API is missing, to `XMLHttpRequest` for `fetch`, a JavaScript zlib/DEFLATE decoder for `DecompressionStream`, mouse events for Pointer Events, an `<img>` element for `createImageBitmap`, and point-by-point mask paths for `DOMMatrix` and `Path2D.addPath`. `npm run test:dist` runs the tests on both bundles. The bundles have no runtime dependencies.
+The build ([`tools/build.js`](./tools/build.js)) generates one versioned ES5 browser bundle from the scripts of `src/modules.json`, targeting Chrome 38. It includes a source map, and the build checks that its version matches `RetroFlash.version`. Before anything is written, the sources and bundle are loaded in isolated contexts. Small polyfills ([`tools/browser-polyfills.js`](./tools/browser-polyfills.js)) and browser API fallbacks support older engines, including XHR loading, JavaScript zlib/DEFLATE decompression, mouse events, `<img>` image decoding, and point-by-point mask paths. `npm run test:dist` runs the tests against this bundle. The bundle has no runtime dependencies.
 
 The tests and the demos do not need `npm install`.
 

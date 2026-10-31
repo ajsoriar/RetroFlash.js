@@ -6,6 +6,7 @@ Notable changes by release. See [known limitations](./LIMITATIONS.md) for curren
 
 - Added a minimal ActionScript 3 (AVM2) runtime: ABC parsing with checks before anything runs, document and `SymbolClass` timeline classes, `addFrameScript`, timeline control, button mouse events, `navigateToURL`, and `ExternalInterface.call` through the host page. Unsupported code is reported with its method and bytecode offset. See [known limitations](./LIMITATIONS.md).
 - The reader decodes `SymbolClass`, `DefineSceneAndFrameLabelData`, and the `DoABC` header.
+- The canvas that replaces legacy `<object>`/`<embed>` markup carries the SWF path from that markup in `data-original-source`.
 
 ## 1.0.0-beta.2 — 2026-10-31
 

@@ -133,6 +133,8 @@
     canvas.style.backgroundColor = paramOf(element, 'bgcolor');
     canvas.setAttribute('role', 'img');
     canvas.setAttribute('aria-label', element.getAttribute('title') || 'Flash movie');
+    // The SWF path exactly as the replaced markup wrote it (movie param, data, src, or the inner <embed>).
+    canvas.setAttribute('data-original-source', source);
     if (element.id) canvas.id = element.id;
     if (element.className) canvas.className = element.className;
     element.parentNode.replaceChild(canvas, element);

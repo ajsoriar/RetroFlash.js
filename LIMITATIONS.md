@@ -127,7 +127,7 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 ## Verification and quality
 
 64. Pixel accuracy has not been compared with a reference player.
-65. Drawing is tested with stand-in canvases in Node, and checked by eye and by sampled pixels in headless Chrome only. Firefox, Safari, and mobile browsers have not been checked.
+65. Drawing is tested with stand-in canvases in Node, and checked by eye and by sampled pixels in headless Chrome only. Firefox, Safari, and mobile browsers have not been checked. The legacy bundle has been checked in Node and in a current Chrome with the newer APIs removed, not in a real Chrome 38; in browsers without `KeyboardEvent.key` (Chrome before 51), button `KeyPress` conditions do not fire.
 66. Sound has not been checked by ear. MP3 has been tested only with silent frames, because the project has no MP3 encoder.
 67. The corpus of real files is small: four authorized files of one kind (virtual tours).
 68. The reader and the player check bounds and limits against hostile files, and the tests include controlled fuzzing, but there has been no independent security review.

@@ -57,15 +57,46 @@ test('CWS decodes to exactly the same structure as the FWS original', async () =
   assert.deepStrictEqual(Array.from(cws.getTagData(1)), [0x33, 0x66, 0x99]);
 });
 
-test('CWS without DecompressionStream is rejected explicitly; FWS still loads', async () => {
+// Runs fn with DecompressionStream missing, so the reader uses its JavaScript zlib/DEFLATE decoder.
+async function withoutDecompressionStream(fn) {
   const saved = globalThis.DecompressionStream;
   globalThis.DecompressionStream = undefined;
-  try {
-    await rejectsWithCode(SWFReader.load(fixture('valid/cws-minimal.swf')), 'CWS_UNSUPPORTED');
+  try { return await fn(); } finally { globalThis.DecompressionStream = saved; }
+}
+
+test('CWS without DecompressionStream is decompressed by the JavaScript fallback; FWS still loads', async () => {
+  const native = await SWFReader.load(fixture('valid/cws-minimal.swf'));
+  await withoutDecompressionStream(async () => {
+    const fallback = await SWFReader.load(fixture('valid/cws-minimal.swf'));
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(fallback.tags)), JSON.parse(JSON.stringify(native.tags)));
+    assert.deepStrictEqual(Array.from(fallback.getTagData(1)), [0x33, 0x66, 0x99]);
     assert.strictEqual((await SWFReader.load(fixture('valid/fws-minimal.swf'))).tags.length, 4);
-  } finally {
-    globalThis.DecompressionStream = saved;
-  }
+  });
+});
+
+test('zlib/DEFLATE fallback: matches zlib for stored, fixed and dynamic blocks; bounded output; bad streams refused', async () => {
+  const zlib = require('zlib');
+  let seed = 7;
+  const random = Buffer.alloc(70000).map(() => (seed = (seed * 1103515245 + 12345) >>> 0) >>> 24);
+  const text = Buffer.from('RetroFlash plays SWF movies on Canvas 2D. '.repeat(2000) + 'end');
+  const samples = [Buffer.alloc(0), Buffer.from('a'), text, random, Buffer.concat([random.subarray(0, 40000), random.subarray(0, 40000)])];
+  const options = [{ level: 0 }, { level: 1 }, { level: 9 }, { level: 6, strategy: zlib.constants.Z_FIXED }, { level: 6, strategy: zlib.constants.Z_HUFFMAN_ONLY }];
+  await withoutDecompressionStream(async () => {
+    for (const data of samples) {
+      for (const o of options) {
+        const out = await SWFReader.inflate(new Uint8Array(zlib.deflateSync(data, o)), data.length);
+        assert.ok(Buffer.from(out).equals(data), data.length + ' bytes, ' + JSON.stringify(o));
+      }
+    }
+    const packed = new Uint8Array(zlib.deflateSync(text));
+    assert.deepStrictEqual(Buffer.from(await SWFReader.inflate(packed, 10, { truncate: true })).toString(), text.subarray(0, 10).toString());
+    await rejectsWithCode(SWFReader.inflate(packed, 10), 'INFLATE_TOO_LARGE');
+    const badSum = Uint8Array.from(packed); badSum[badSum.length - 1] ^= 1;
+    await rejectsWithCode(SWFReader.inflate(badSum, text.length), 'INFLATE_FAILED');
+    await rejectsWithCode(SWFReader.inflate(packed.subarray(0, packed.length - 20), text.length), 'INFLATE_FAILED');
+    await rejectsWithCode(SWFReader.inflate(Uint8Array.from([0x78, 0x00, 1, 2, 3, 4, 5]), 10), 'INFLATE_FAILED');
+    await rejectsWithCode(SWFReader.inflate(Uint8Array.from([0x78, 0x9c, 0x07, 0, 0, 0, 0, 0]), 10), 'INFLATE_FAILED'); // reserved block type
+  });
 });
 
 test('timeline fixture: frames, labels, long header and every decoded placement', async () => {

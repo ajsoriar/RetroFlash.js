@@ -34,6 +34,8 @@ Load the browser bundle from the installed package:
 
 The bundle also detects legacy Flash `<object>` and `<embed>` elements. Movies can request navigation, page calls, or external resources; these browser interactions follow the browser's security rules, including CORS. See the [project README](https://github.com/ajsoriar/RetroFlash.js/blob/main/README.md) for usage.
 
+The package also includes `dist/retroflash-{{version}}.legacy.min.js`, transpiled to ES5 syntax for older JavaScript engines. It adds the few ES2015 functions the player needs, and both bundles fall back to `XMLHttpRequest`, a JavaScript zlib/DEFLATE decoder, mouse events, and `<img>` image decoding where newer browser APIs are missing.
+
 RetroFlash.js has no runtime dependencies. The browser needs Canvas 2D; Web Audio is optional.
 
 ## License

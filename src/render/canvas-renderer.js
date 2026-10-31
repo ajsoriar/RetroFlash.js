@@ -60,6 +60,20 @@
     return entry.path;
   }
   function domMatrix(m) { return new DOMMatrix([m[0], m[1], m[2], m[3], m[4], m[5]]); }
+  /* Adds the path of `entry` (a fill or a glyph with `commands`), transformed by `m`, to `target`. Browsers
+     without DOMMatrix or Path2D.addPath (Chrome before 61 and 68) get the points transformed one by one; an
+     affine transform keeps quadratic curves exact. */
+  function addTransformedPath(target, entry, m) {
+    if (typeof global.DOMMatrix === 'function' && typeof target.addPath === 'function') return target.addPath(pathOf(entry), domMatrix(m));
+    var c = entry.commands;
+    function x(i) { return m[0] * c[i] + m[2] * c[i + 1] + m[4]; }
+    function y(i) { return m[1] * c[i] + m[3] * c[i + 1] + m[5]; }
+    for (var i = 0; i < c.length;) {
+      if (c[i] === 0) { target.moveTo(x(i + 1), y(i + 1)); i += 3; }
+      else if (c[i] === 1) { target.lineTo(x(i + 1), y(i + 1)); i += 3; }
+      else { target.quadraticCurveTo(x(i + 1), y(i + 1), x(i + 3), y(i + 3)); i += 5; }
+    }
+  }
 
   CanvasRenderer.prototype.render = function (stage, root) {
     var ctx = this.ctx, canvas = this.canvas, bg = stage.background;
@@ -113,14 +127,14 @@
     var character = obj.character, self = this;
     if (!character) return;
     if (character.type === 'shape' || character.type === 'morphShape') {
-      var transform = domMatrix(world);
       geometryOf(shapeOf(obj, this.report), this.report).groups.forEach(function (g) {
-        g.fills.forEach(function (fill) { maskPath.addPath(pathOf(fill), transform); });
+        g.fills.forEach(function (fill) { addTransformedPath(maskPath, fill, world); });
       });
     } else if (character.type === 'text') {
       var base = multiply(world, toMatrix(character.text.matrix));
       this.textGlyphs(character).forEach(function (p) {
-        maskPath.addPath(glyphPath(p.glyph), domMatrix(multiply(base, [p.scale, 0, 0, p.scale, p.x, p.y])));
+        glyphCommands(p.glyph);
+        addTransformedPath(maskPath, p.glyph, multiply(base, [p.scale, 0, 0, p.scale, p.x, p.y]));
       });
     } else if (character.type === 'editText') {
       this.report('render:textMask', 'Text fields used as masks do not mask anything yet.', character.id);

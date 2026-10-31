@@ -120,11 +120,16 @@
     this.domHandlers = [];
     if (this.options.input && typeof this.canvas.addEventListener === 'function') this.attachInput();
   }
-  // Pointer and keyboard on the canvas drive the movie's buttons. The canvas gets focus when pressed.
+  /* Pointer and keyboard on the canvas drive the movie's buttons. The canvas gets focus when pressed. Browsers
+     without Pointer Events (Chrome before 55) use mouse events; the release is then heard on the document, as
+     pointer capture would deliver it. */
   Player.prototype.attachInput = function () {
-    var self = this, canvas = this.canvas;
+    var self = this, canvas = this.canvas, doc = canvas.ownerDocument || global.document;
+    var pointer = typeof global.PointerEvent === 'function' || !doc;
+    var names = pointer ? { move: 'pointermove', leave: 'pointerleave', down: 'pointerdown', up: 'pointerup' }
+      : { move: 'mousemove', leave: 'mouseleave', down: 'mousedown', up: 'mouseup' };
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;
-    function on(type, fn) { canvas.addEventListener(type, fn); self.domHandlers.push([type, fn]); }
+    function on(type, fn, target) { (target || canvas).addEventListener(type, fn); self.domHandlers.push([type, fn, target || canvas]); }
     function point(e) {
       var rect = canvas.getBoundingClientRect(), b = self.movie.swf.bounds;
       return [b.xminTwips + ((e.clientX - rect.left) / rect.width) * (b.xmaxTwips - b.xminTwips),
@@ -135,9 +140,9 @@
       self.env.instances = 0;
       return true;
     }
-    on('pointermove', function (e) { if (ready()) { var p = point(e); if (self.input.move(p[0], p[1])) self.afterInput(); } });
-    on('pointerleave', function () { if (ready() && !self.input.mouseDown && self.input.leave()) self.afterInput(); });
-    on('pointerdown', function (e) {
+    on(names.move, function (e) { if (ready()) { var p = point(e); if (self.input.move(p[0], p[1])) self.afterInput(); } });
+    on(names.leave, function () { if (ready() && !self.input.mouseDown && self.input.leave()) self.afterInput(); });
+    on(names.down, function (e) {
       if (!ready() || e.button !== 0) return;
       try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* capture is optional */ }
       if (canvas.focus) canvas.focus({ preventScroll: true });
@@ -145,14 +150,14 @@
       var changed = self.input.move(p[0], p[1]);
       if (self.input.down() || changed) self.afterInput();
     });
-    on('pointerup', function (e) {
-      if (!ready() || e.button !== 0) return;
+    on(names.up, function (e) {
+      if (!ready() || e.button !== 0 || (!pointer && !self.input.mouseDown)) return;
       var p = point(e), inside = p[0] >= self.movie.swf.bounds.xminTwips && p[0] <= self.movie.swf.bounds.xmaxTwips &&
         p[1] >= self.movie.swf.bounds.yminTwips && p[1] <= self.movie.swf.bounds.ymaxTwips;
       if (inside) self.input.move(p[0], p[1]); else self.input.leave();
       if (self.input.up()) self.afterInput();
-    });
-    on('pointercancel', function () { if (ready() && self.input.up()) self.afterInput(); });
+    }, pointer ? canvas : doc);
+    if (pointer) on('pointercancel', function () { if (ready() && self.input.up()) self.afterInput(); });
     // Keys: Key.isDown and the key events of clips and listeners, then the KeyPress actions of buttons.
     on('keydown', function (e) {
       if (!ready()) return;
@@ -533,7 +538,7 @@
   Player.prototype.destroy = function () {
     var canvas = this.canvas;
     this.pause();
-    this.domHandlers.forEach(function (h) { canvas.removeEventListener(h[0], h[1]); });
+    this.domHandlers.forEach(function (h) { (h[2] || canvas).removeEventListener(h[0], h[1]); });
     this.domHandlers = [];
     this.state = 'destroyed';
     this.listeners = {};

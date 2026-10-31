@@ -191,6 +191,49 @@ test('button clicks: CLICK listeners navigate and call the page through the host
   assert.strictEqual(host.log.length, 2, 'a click outside every button sends nothing');
 });
 
+test('canvas input: Pointer Events, or mouse events with the release heard on the document (no PointerEvent)', async () => {
+  // A canvas and document that record listeners; the 550×400 stage is drawn at 1 px per 20 twips.
+  const target = () => {
+    const listeners = {};
+    return {
+      listeners,
+      addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+      removeEventListener(type, fn) { listeners[type] = (listeners[type] || []).filter((f) => f !== fn); },
+      fire(type, e) { (listeners[type] || []).slice().forEach((fn) => fn(Object.assign({ button: 0, pointerId: 1, preventDefault() {} }, e))); }
+    };
+  };
+  async function clickWith(pointerEvents) {
+    const doc = target(), canvas = Object.assign(target(), {
+      ownerDocument: doc, style: {}, width: 0, height: 0, tabIndex: 0, focus() {}, setPointerCapture() {},
+      getContext: () => new Proxy({}, { get: (t, k) => (k in t ? t[k] : () => ({ addColorStop() {} })), set: (t, k, v) => { t[k] = v; return true; } }),
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 550, height: 400 })
+    });
+    const saved = globalThis.PointerEvent, host = recordingHost();
+    if (pointerEvents) globalThis.PointerEvent = function PointerEvent() {}; else delete globalThis.PointerEvent;
+    try {
+      const player = new RetroFlash.Player({ canvas, audio: false, host });
+      await player.load(menuMovie());
+      const at = { clientX: GO[0] / 20, clientY: GO[1] / 20 };
+      const [move, down, up] = pointerEvents ? ['pointermove', 'pointerdown', 'pointerup'] : ['mousemove', 'mousedown', 'mouseup'];
+      canvas.fire(move, at);
+      canvas.fire(down, at);
+      (pointerEvents ? canvas : doc).fire(up, at);
+      player.destroy();
+      return { log: host.log, canvas, doc };
+    } finally {
+      if (saved === undefined) delete globalThis.PointerEvent; else globalThis.PointerEvent = saved;
+    }
+  }
+  const modern = await clickWith(true);
+  assert.deepStrictEqual(modern.log, [['navigate', 'page.html', '_self']]);
+  assert.ok(!modern.doc.listeners.mouseup, 'Pointer Events need nothing on the document');
+  const legacy = await clickWith(false);
+  assert.deepStrictEqual(legacy.log, [['navigate', 'page.html', '_self']]);
+  assert.ok(!legacy.canvas.listeners.pointerdown, 'no Pointer Events listeners without PointerEvent');
+  assert.deepStrictEqual(legacy.doc.listeners.mouseup, [], 'destroy() removes the document listener');
+  assert.ok(Object.values(legacy.canvas.listeners).every((list) => !list.length), 'destroy() removes the canvas listeners');
+});
+
 test('ExternalInterface without a host: an uncaught Error #2067, reported; actions: false runs no ActionScript 3', async () => {
   const bare = await start(menuMovie(), { host: null });
   click(bare.player, EXT);

@@ -6,12 +6,14 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const babel = require('@babel/core');
 const { minify } = require('terser');
 
 const root = path.join(__dirname, '..');
 const files = require(path.join(root, 'src', 'modules.json'));
 const pkg = require(path.join(root, 'package.json'));
 const bundleName = 'retroflash-' + pkg.version + '.min.js';
+const legacyBundleName = 'retroflash-' + pkg.version + '.legacy.min.js';
 if (pkg.browser !== './dist/' + bundleName) {
   throw new Error('build: package.browser must be ./dist/' + bundleName);
 }
@@ -45,21 +47,57 @@ async function build() {
     sourceMap: { filename: bundleName, url: bundleName + '.map', root: '../', includeSources: true }
   });
   load(result.code, bundleName);
-  return { bundleName, code: result.code + '\n', map: result.map, sourceBytes: Object.values(sources).reduce((sum, s) => sum + Buffer.byteLength(s), 0) };
+
+  // Keep the regular bundle unchanged; create a second ES5-syntax bundle for older JavaScript parsers.
+  // This only transpiles syntax. Browser APIs missing from old engines still need explicit fallbacks.
+  const transpiled = await babel.transformAsync(result.code, {
+    babelrc: false,
+    configFile: false,
+    sourceMaps: true,
+    inputSourceMap: JSON.parse(result.map),
+    presets: [[require.resolve('@babel/preset-env'), { targets: { chrome: '38' }, modules: false }]]
+  });
+  // The ES2015+ library functions the player calls that Chrome 38 lacks (Babel does not add them).
+  const legacyPolyfill = fs.readFileSync(path.join(__dirname, 'legacy-polyfills.js'), 'utf8').trim();
+  const legacyResult = await minify({ [legacyBundleName]: transpiled.code }, {
+    compress: { passes: 2 },
+    mangle: true,
+    format: { preamble: header + '\n' + legacyPolyfill, comments: false },
+    sourceMap: {
+      filename: legacyBundleName,
+      url: legacyBundleName + '.map',
+      root: '../',
+      includeSources: true,
+      content: transpiled.map
+    }
+  });
+  load(legacyResult.code, legacyBundleName);
+  return {
+    bundleName,
+    code: result.code + '\n',
+    map: result.map,
+    legacyBundleName,
+    legacyCode: legacyResult.code + '\n',
+    legacyMap: legacyResult.map,
+    sourceBytes: Object.values(sources).reduce((sum, s) => sum + Buffer.byteLength(s), 0)
+  };
 }
 
 if (require.main === module) {
-  build().then(({ bundleName, code, map, sourceBytes }) => {
+  build().then(({ bundleName, code, map, legacyBundleName, legacyCode, legacyMap, sourceBytes }) => {
     const dist = path.join(root, 'dist');
     fs.mkdirSync(dist, { recursive: true });
-    // Keep one current versioned bundle in the repository and package.
-    fs.readdirSync(dist).filter((name) => /^retroflash(?:-[0-9][0-9A-Za-z.+-]*)?\.min\.js(?:\.map)?$/.test(name))
-      .filter((name) => name !== bundleName && name !== bundleName + '.map')
+    // Keep only the current regular and legacy versioned bundles in the repository and package.
+    fs.readdirSync(dist).filter((name) => /^retroflash(?:-[0-9][0-9A-Za-z.+-]*)?(?:\.legacy)?\.min\.js(?:\.map)?$/.test(name))
+      .filter((name) => ![bundleName, bundleName + '.map', legacyBundleName, legacyBundleName + '.map'].includes(name))
       .forEach((name) => fs.unlinkSync(path.join(dist, name)));
     fs.writeFileSync(path.join(dist, bundleName), code);
     fs.writeFileSync(path.join(dist, bundleName + '.map'), map);
+    fs.writeFileSync(path.join(dist, legacyBundleName), legacyCode);
+    fs.writeFileSync(path.join(dist, legacyBundleName + '.map'), legacyMap);
     const kb = (bytes) => (bytes / 1024).toFixed(1) + ' KiB';
     console.log('dist/' + bundleName + ': ' + files.length + ' scripts, ' + kb(sourceBytes) + ' -> ' + kb(Buffer.byteLength(code)) + ' (+ source map)');
+    console.log('dist/' + legacyBundleName + ': ES5 syntax for Chrome 38, ' + kb(Buffer.byteLength(legacyCode)) + ' (+ source map)');
   }, (err) => {
     console.error(err);
     process.exitCode = 1;

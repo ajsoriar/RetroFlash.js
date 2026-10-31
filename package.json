@@ -41,7 +41,7 @@
     "build": "node tools/build.js",
     "package": "node tools/package.js",
     "test": "node tests/run.js",
-    "test:dist": "node tools/build.js && node tests/run.js --dist",
+    "test:dist": "node tools/build.js && node tests/run.js --dist && node tests/run.js --dist --legacy",
     "prepack": "npm run build",
     "prepublishOnly": "npm run test:dist",
     "fixtures": "node tests/fixtures/build-fixtures.js",
@@ -52,6 +52,8 @@
     "node": ">=16"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@babel/preset-env": "^7.29.7",
     "terser": "5.51.2"
   }
 }

@@ -93,6 +93,39 @@
     c.height = height;
     return c;
   }
+  // Frees a decoded image: an ImageBitmap closes; a canvas (from decodeWithImage) is emptied.
+  function closeImage(image) {
+    if (typeof image.close === 'function') image.close();
+    else { image.width = 0; image.height = 0; }
+  }
+  /* Browsers without createImageBitmap (Chrome before 50) decode through an <img> element and a blob URL; the
+     result is drawn on a canvas. */
+  function decodeWithImage(bytes, type) {
+    return new Promise(function (resolve, reject) {
+      var url = global.URL.createObjectURL(new Blob([bytes], { type: type })), img = new global.Image();
+      img.onload = function () {
+        global.URL.revokeObjectURL(url);
+        var canvas = createCanvas(img.naturalWidth || img.width, img.naturalHeight || img.height);
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas);
+      };
+      img.onerror = function () {
+        global.URL.revokeObjectURL(url);
+        reject(new Error('The browser could not decode the ' + type + ' image'));
+      };
+      img.src = url;
+    });
+  }
+  // ImageData of RGBA pixels; browsers before Chrome 42 cannot construct one and get it from the context.
+  function imageDataOf(ctx, rgba, width, height) {
+    try {
+      return new ImageData(rgba, width, height);
+    } catch (err) {
+      var data = ctx.createImageData(width, height);
+      data.data.set(rgba);
+      return data;
+    }
+  }
   var IMAGE_TYPES = { jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif' };
   // Pixel size declared in the header of encoded image data (JPEG frame header SOFn, PNG IHDR, GIF logical
   // screen), read before decoding so that oversized images are refused before any memory is allocated.
@@ -140,22 +173,25 @@
     if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'gif';
     return null;
   }
-  /* Browser only: decodes JPEG, PNG or GIF data with the browser's decoder into an ImageBitmap. The size in its
-     header is reserved from `limits` first, and given back if decoding fails. Returns { image, reserved }. */
+  /* Browser only: decodes JPEG, PNG or GIF data with the browser's decoder into an ImageBitmap (a canvas where
+     createImageBitmap is missing). The size in its header is reserved from `limits` first, and given back if
+     decoding fails. Returns { image, reserved }. */
   async function decodeEncoded(bytes, format, limits, name) {
     if (!IMAGE_TYPES[format]) throw playerError('BITMAP_FORMAT', 'Unrecognised image data in ' + name);
     var declared = imageSize(bytes, format);
     if (!declared) throw playerError('BITMAP_FORMAT', 'No image size found in the ' + format + ' header of ' + name);
     var reserved = reservePixels(limits, declared.width, declared.height), image;
     try {
-      image = await createImageBitmap(new Blob([bytes], { type: IMAGE_TYPES[format] }));
+      if (typeof global.createImageBitmap === 'function') image = await global.createImageBitmap(new Blob([bytes], { type: IMAGE_TYPES[format] }));
+      else if (typeof global.Image === 'function' && global.URL && typeof global.URL.createObjectURL === 'function') image = await decodeWithImage(bytes, IMAGE_TYPES[format]);
+      else throw new Error('This environment has neither createImageBitmap nor an <img> element to decode images');
     } catch (err) {
       limits.remaining += reserved;
       throw err;
     }
     // The decoder's result must not be larger than what the header declared (and was reserved).
     if (image.width * image.height > reserved) {
-      image.close();
+      closeImage(image);
       limits.remaining += reserved;
       throw playerError('BITMAP_TOO_LARGE', image.width + '×' + image.height + ' is larger than the ' + declared.width + '×' + declared.height + ' declared in its header');
     }
@@ -178,8 +214,8 @@
       if (!f.width || !f.height) throw playerError('BITMAP_EMPTY', 'Bitmap has no pixels');
       character.reserved = reservePixels(limits, f.width, f.height);
       var pixels = decodeLossless(f, await global.SWFReader.inflate(data.subarray(f.dataStart), losslessByteLength(f), { truncate: true }));
-      var canvas = createCanvas(pixels.width, pixels.height);
-      canvas.getContext('2d').putImageData(new ImageData(pixels.rgba, pixels.width, pixels.height), 0, 0);
+      var canvas = createCanvas(pixels.width, pixels.height), ctx2d = canvas.getContext('2d');
+      ctx2d.putImageData(imageDataOf(ctx2d, pixels.rgba, pixels.width, pixels.height), 0, 0);
       return canvas;
     }
     var bytes = data.subarray(f.imageStart, f.imageEnd);
@@ -191,10 +227,10 @@
     if (f.alphaStart === undefined || f.imageFormat !== 'jpeg') return image;
     // DefineBitsJPEG3/4: separate zlib alpha plane, one byte per pixel; colour data is treated as premultiplied.
     var alpha = await global.SWFReader.inflate(data.subarray(f.alphaStart), w * h, { truncate: true });
-    if (alpha.length !== w * h) { image.close(); throw playerError('BITMAP_ALPHA', 'Alpha plane has ' + alpha.length + ' bytes, expected ' + w * h); }
+    if (alpha.length !== w * h) { closeImage(image); throw playerError('BITMAP_ALPHA', 'Alpha plane has ' + alpha.length + ' bytes, expected ' + w * h); }
     var target = createCanvas(w, h), ctx = target.getContext('2d');
     ctx.drawImage(image, 0, 0);
-    image.close();
+    closeImage(image);
     var frame = ctx.getImageData(0, 0, w, h), d = frame.data;
     for (var i = 0, o = 0; i < alpha.length; i++, o += 4) unpremultiply(d, o, d[o], d[o + 1], d[o + 2], alpha[i]);
     ctx.putImageData(frame, 0, 0);

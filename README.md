@@ -107,7 +107,7 @@ See [`LIMITATIONS.md`](./LIMITATIONS.md) for current compatibility gaps.
 ## Requirements
 
 - **Playback:** a browser with Canvas 2D. Web Audio is optional and is used when available. Browser security rules, including CORS, govern external SWF and resource loads.
-- **Build and tests:** Node.js 16 or later. Building the minified bundle also requires `npm install` for the development-only Terser dependency; the player has no runtime dependencies.
+- **Build and tests:** Node.js 16 or later. Building the bundles requires `npm install` for the development-only Terser and Babel dependencies; the player has no runtime dependencies.
 
 ## Tests
 
@@ -127,12 +127,12 @@ Run the corpus only on SWF files you are allowed to use, and never commit third-
 ## Build
 
 ```sh
-npm install      # once: installs terser, the only development dependency
+npm install      # once: installs build dependencies
 npm run build
 npm run test:dist
 ```
 
-The build ([`tools/build.js`](./tools/build.js)) minifies the scripts of `src/modules.json`, in order, into a versioned file with [terser](https://terser.org/), with a source map that points back to `src/`. The filename uses the package version from `package.json`; the build checks that it matches `RetroFlash.version`. Before anything is written, the sources and the bundle are each loaded in an isolated context. The current minified bundle and source map in `dist/` are committed, and CI checks that they match the sources. The bundle has no runtime dependencies.
+The build ([`tools/build.js`](./tools/build.js)) generates two versioned bundles from the scripts of `src/modules.json`: the regular minified bundle and an ES5-syntax legacy bundle targeting Chrome 38. Both include source maps, and the build checks that their version matches `RetroFlash.version`. Before anything is written, the sources and both bundles are loaded in isolated contexts. The legacy bundle starts with small polyfills ([`tools/legacy-polyfills.js`](./tools/legacy-polyfills.js): `Object.assign`, `Array.from`, `String.fromCodePoint`, typed-array `slice`). Both bundles fall back, where a browser API is missing, to `XMLHttpRequest` for `fetch`, a JavaScript zlib/DEFLATE decoder for `DecompressionStream`, mouse events for Pointer Events, an `<img>` element for `createImageBitmap`, and point-by-point mask paths for `DOMMatrix` and `Path2D.addPath`. `npm run test:dist` runs the tests on both bundles. The bundles have no runtime dependencies.
 
 The tests and the demos do not need `npm install`.
 

@@ -1183,20 +1183,184 @@
   }
 
   var CWS_ERRORS = {
-    unsupported: ['CWS_UNSUPPORTED', 'CWS needs DecompressionStream("deflate"), which this environment does not provide; FWS works without it'],
+    unsupported: ['CWS_UNSUPPORTED', 'This environment cannot decompress CWS (zlib/DEFLATE) data; FWS works without decompression'],
     tooLong: ['CWS_LENGTH_MISMATCH', 'Decompressed CWS data exceeds the declared length'],
     failed: ['CWS_INFLATE_FAILED', 'Could not decompress CWS (zlib)']
   };
   var INFLATE_ERRORS = {
-    unsupported: ['INFLATE_UNSUPPORTED', 'zlib data needs DecompressionStream("deflate"), which this environment does not provide'],
+    unsupported: ['INFLATE_UNSUPPORTED', 'This environment cannot decompress zlib/DEFLATE data'],
     tooLong: ['INFLATE_TOO_LARGE', 'Decompressed data exceeds the expected length'],
     failed: ['INFLATE_FAILED', 'Could not decompress zlib data']
   };
+
+  /* Small RFC 1951 decoder used when Compression Streams are unavailable. SWF's CWS wrapper uses zlib/DEFLATE;
+     this fallback keeps its output bounded by the same expected-length limit as the native stream path. */
+  function inflateZlibFallback(compressed, maxLength, errors, truncate) {
+    if (compressed.length < 6) fail(errors.failed[0], errors.failed[1] + ': truncated zlib stream');
+    var cmf = compressed[0], flg = compressed[1];
+    if ((cmf & 15) !== 8 || (cmf >> 4) > 7 || ((cmf << 8) + flg) % 31 !== 0) {
+      fail(errors.failed[0], errors.failed[1] + ': invalid zlib header');
+    }
+    if (flg & 32) fail(errors.failed[0], errors.failed[1] + ': preset zlib dictionaries are not supported');
+
+    var input = { bytes: compressed, pos: 2, bit: 0, end: compressed.length - 4 };
+    function readBit() {
+      if (input.pos >= input.end) fail(errors.failed[0], errors.failed[1] + ': truncated DEFLATE data');
+      var value = (input.bytes[input.pos] >> input.bit) & 1;
+      if (++input.bit === 8) { input.bit = 0; input.pos++; }
+      return value;
+    }
+    function readBits(count) {
+      var value = 0;
+      for (var i = 0; i < count; i++) value |= readBit() << i;
+      return value;
+    }
+    function alignByte() {
+      if (input.bit) { input.bit = 0; input.pos++; }
+    }
+    function huffman(lengths, allowEmpty) {
+      var counts = [], next = [], maxBits = 0, code = 0, nodes = [{ zero: -1, one: -1, symbol: -1 }], symbols = 0;
+      for (var i = 0; i < lengths.length; i++) {
+        var size = lengths[i];
+        if (size < 0 || size > 15) fail(errors.failed[0], errors.failed[1] + ': invalid Huffman code length');
+        if (size) { counts[size] = (counts[size] || 0) + 1; symbols++; if (size > maxBits) maxBits = size; }
+      }
+      if (!symbols) {
+        if (allowEmpty) return null;
+        fail(errors.failed[0], errors.failed[1] + ': empty Huffman tree');
+      }
+      var remaining = 1;
+      for (i = 1; i <= maxBits; i++) {
+        remaining = remaining * 2 - (counts[i] || 0);
+        if (remaining < 0) fail(errors.failed[0], errors.failed[1] + ': oversubscribed Huffman tree');
+        code = (code + (counts[i - 1] || 0)) * 2;
+        next[i] = code;
+      }
+      for (var symbol = 0; symbol < lengths.length; symbol++) {
+        size = lengths[symbol];
+        if (!size) continue;
+        code = next[size]++;
+        var node = 0;
+        for (var bit = size - 1; bit >= 0; bit--) {
+          var key = (code >> bit) & 1 ? 'one' : 'zero';
+          if (nodes[node][key] < 0) {
+            nodes[node][key] = nodes.length;
+            nodes.push({ zero: -1, one: -1, symbol: -1 });
+          }
+          node = nodes[node][key];
+        }
+        if (nodes[node].symbol >= 0 || nodes[node].zero >= 0 || nodes[node].one >= 0) {
+          fail(errors.failed[0], errors.failed[1] + ': invalid Huffman tree');
+        }
+        nodes[node].symbol = symbol;
+      }
+      return nodes;
+    }
+    function readSymbol(tree) {
+      if (!tree) fail(errors.failed[0], errors.failed[1] + ': missing distance tree');
+      var node = 0;
+      for (var i = 0; i < 15; i++) {
+        node = tree[node][readBit() ? 'one' : 'zero'];
+        if (node < 0) fail(errors.failed[0], errors.failed[1] + ': invalid Huffman code');
+        if (tree[node].symbol >= 0) return tree[node].symbol;
+      }
+      fail(errors.failed[0], errors.failed[1] + ': Huffman code is too long');
+    }
+
+    var output = new Uint8Array(maxLength), outPos = 0, stop = {};
+    function writeByte(value) {
+      if (outPos >= maxLength) {
+        if (truncate) throw stop;
+        fail(errors.tooLong[0], errors.tooLong[1] + ' (' + maxLength + ' bytes)');
+      }
+      output[outPos++] = value;
+    }
+    function copyBlock(literalTree, distanceTree) {
+      var lengthBase = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+      var lengthExtra = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+      var distanceBase = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+      var distanceExtra = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+      for (;;) {
+        var sym = readSymbol(literalTree);
+        if (sym < 256) { writeByte(sym); continue; }
+        if (sym === 256) return;
+        if (sym < 257 || sym > 285) fail(errors.failed[0], errors.failed[1] + ': invalid length code');
+        var index = sym - 257, length = lengthBase[index] + readBits(lengthExtra[index]);
+        var distCode = readSymbol(distanceTree);
+        if (distCode > 29) fail(errors.failed[0], errors.failed[1] + ': invalid distance code');
+        var distance = distanceBase[distCode] + readBits(distanceExtra[distCode]);
+        if (distance > outPos) fail(errors.failed[0], errors.failed[1] + ': distance points before output');
+        while (length--) writeByte(output[outPos - distance]);
+      }
+    }
+
+    var fixedLiteralLengths = [], fixedDistanceLengths = [];
+    for (var fi = 0; fi <= 287; fi++) fixedLiteralLengths[fi] = fi <= 143 ? 8 : fi <= 255 ? 9 : fi <= 279 ? 7 : 8;
+    for (fi = 0; fi < 32; fi++) fixedDistanceLengths[fi] = 5;
+    var fixedLiteralTree = null, fixedDistanceTree = null;
+    try {
+      for (var finalBlock = 0; !finalBlock;) {
+        finalBlock = readBits(1);
+        var type = readBits(2), literalTree, distanceTree;
+        if (type === 0) {
+          alignByte();
+          var len = readBits(16), inverse = readBits(16);
+          if (((len ^ 65535) & 65535) !== inverse) fail(errors.failed[0], errors.failed[1] + ': invalid stored block length');
+          while (len--) writeByte(readBits(8));
+        } else if (type === 1) {
+          if (!fixedLiteralTree) {
+            fixedLiteralTree = huffman(fixedLiteralLengths);
+            fixedDistanceTree = huffman(fixedDistanceLengths);
+          }
+          copyBlock(fixedLiteralTree, fixedDistanceTree);
+        } else if (type === 2) {
+          var literalCount = readBits(5) + 257, distanceCount = readBits(5) + 1, codeCount = readBits(4) + 4;
+          var order = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15], codeLengths = [];
+          for (fi = 0; fi < 19; fi++) codeLengths[fi] = 0;
+          for (fi = 0; fi < codeCount; fi++) codeLengths[order[fi]] = readBits(3);
+          var codeTree = huffman(codeLengths), allLengths = [], total = literalCount + distanceCount;
+          while (allLengths.length < total) {
+            var codeSymbol = readSymbol(codeTree), repeat, repeated;
+            if (codeSymbol <= 15) allLengths.push(codeSymbol);
+            else if (codeSymbol === 16) {
+              if (!allLengths.length) fail(errors.failed[0], errors.failed[1] + ': repeat has no previous code length');
+              repeat = readBits(2) + 3; repeated = allLengths[allLengths.length - 1];
+              while (repeat--) allLengths.push(repeated);
+            } else if (codeSymbol === 17) {
+              repeat = readBits(3) + 3; while (repeat--) allLengths.push(0);
+            } else if (codeSymbol === 18) {
+              repeat = readBits(7) + 11; while (repeat--) allLengths.push(0);
+            } else fail(errors.failed[0], errors.failed[1] + ': invalid code-length symbol');
+            if (allLengths.length > total) fail(errors.failed[0], errors.failed[1] + ': code lengths exceed their declared count');
+          }
+          literalTree = huffman(allLengths.slice(0, literalCount));
+          distanceTree = huffman(allLengths.slice(literalCount), true);
+          copyBlock(literalTree, distanceTree);
+        } else fail(errors.failed[0], errors.failed[1] + ': reserved DEFLATE block type');
+      }
+    } catch (err) {
+      if (err === stop) return output.subarray(0, outPos);
+      if (isReaderError(err)) throw err;
+      fail(errors.failed[0], errors.failed[1] + ': ' + (err && err.message ? err.message : err));
+    }
+    var adlerA = 1, adlerB = 0;
+    for (var ai = 0; ai < outPos; ai++) {
+      adlerA = (adlerA + output[ai]) % 65521;
+      adlerB = (adlerB + adlerA) % 65521;
+    }
+    var expectedAdler = (compressed[compressed.length - 4] * 16777216 + compressed[compressed.length - 3] * 65536 +
+      compressed[compressed.length - 2] * 256 + compressed[compressed.length - 1]) >>> 0;
+    if (((adlerB * 65536 + adlerA) >>> 0) !== expectedAdler) {
+      fail(errors.failed[0], errors.failed[1] + ': zlib checksum mismatch');
+    }
+    return output.subarray(0, outPos);
+  }
 
   // Inflates a zlib stream into at most maxLength bytes and stops as soon as the output would exceed it:
   // with `truncate` the first maxLength bytes are returned, otherwise errors.tooLong is thrown.
   async function inflateZlib(compressed, maxLength, errors, truncate) {
     errors = errors || INFLATE_ERRORS;
+    if (typeof DecompressionStream !== 'function') return inflateZlibFallback(compressed, maxLength, errors, truncate);
     var stream;
     try {
       stream = new DecompressionStream('deflate');

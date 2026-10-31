@@ -6,8 +6,9 @@
    - call: javascript: URLs and ExternalInterface.call call a page function by name (`panorama`, `a.b.f`) with
      the arguments the movie gives; nothing is ever evaluated as code;
    - fscommand: calls the page's `<objectID>_DoFSCommand(command, args)`;
-   - load: fetches what scripts load (loadMovie, loadVariables). Cross-origin responses can only be read when
-     the server allows it (CORS); an image the page may show but not read is shown as it is.
+   - load: fetches what scripts load (loadMovie, loadVariables), using XMLHttpRequest when fetch is unavailable.
+     Cross-origin responses can only be read when the server allows it (CORS); an image the page may show but
+     not read is shown as it is.
    Relative URLs resolve against `base` (by default the page, as in Flash Player). */
 (function (global) {
   'use strict';
@@ -23,6 +24,63 @@
     var err = new Error(message);
     err.code = code;
     return err;
+  }
+
+  function requestBytes(win, url, init, maxFileBytes) {
+    if (typeof win.fetch === 'function') {
+      return Promise.resolve().then(function () { return win.fetch(url, init); }).then(function (response) {
+        if (!response.ok) throw hostError('LOAD_HTTP', 'HTTP ' + response.status + ' for ' + url);
+        var length = Number(response.headers && response.headers.get('content-length'));
+        if (length > maxFileBytes) throw hostError('LOAD_TOO_LARGE', url + ' is larger than ' + maxFileBytes + ' bytes.');
+        return response.arrayBuffer();
+      }).then(function (bytes) {
+        if (bytes.byteLength > maxFileBytes) throw hostError('LOAD_TOO_LARGE', url + ' is larger than ' + maxFileBytes + ' bytes.');
+        return bytes;
+      });
+    }
+
+    if (typeof win.XMLHttpRequest !== 'function') return Promise.reject(new Error('This browser has no fetch or XMLHttpRequest.'));
+    return new Promise(function (resolve, reject) {
+      var xhr = new win.XMLHttpRequest(), settled = false, stoppedForSize = false;
+      function fail(err) {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      }
+      xhr.open(init.method, url, true);
+      xhr.responseType = 'arraybuffer';
+      if (init.headers) Object.keys(init.headers).forEach(function (name) {
+        xhr.setRequestHeader(name, init.headers[name]);
+      });
+      xhr.onprogress = function (event) {
+        if (event.loaded > maxFileBytes) {
+          stoppedForSize = true;
+          xhr.abort();
+          fail(hostError('LOAD_TOO_LARGE', url + ' is larger than ' + maxFileBytes + ' bytes.'));
+        }
+      };
+      xhr.onload = function () {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          fail(hostError('LOAD_HTTP', 'HTTP ' + xhr.status + ' for ' + url));
+          return;
+        }
+        var length = Number(xhr.getResponseHeader('content-length'));
+        if (length > maxFileBytes) {
+          fail(hostError('LOAD_TOO_LARGE', url + ' is larger than ' + maxFileBytes + ' bytes.'));
+          return;
+        }
+        var bytes = xhr.response || new ArrayBuffer(0);
+        if (bytes.byteLength > maxFileBytes) {
+          fail(hostError('LOAD_TOO_LARGE', url + ' is larger than ' + maxFileBytes + ' bytes.'));
+          return;
+        }
+        settled = true;
+        resolve(bytes);
+      };
+      xhr.onerror = function () { fail(new Error('Network request failed')); };
+      xhr.onabort = function () { if (!stoppedForSize) fail(new Error('Network request was aborted')); };
+      xhr.send(init.body || null);
+    });
   }
 
   /* options:
@@ -144,15 +202,8 @@
           init.body = request.body || '';
           init.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
         }
-        return Promise.resolve().then(function () { return win.fetch(url.href, init); }).then(function (response) {
-          if (!response.ok) throw hostError('LOAD_HTTP', 'HTTP ' + response.status + ' for ' + url.href);
-          var length = Number(response.headers && response.headers.get('content-length'));
-          if (length > maxFileBytes) throw hostError('LOAD_TOO_LARGE', url.href + ' is larger than ' + maxFileBytes + ' bytes.');
-          return response.arrayBuffer().then(function (bytes) {
-            if (bytes.byteLength > maxFileBytes) throw hostError('LOAD_TOO_LARGE', url.href + ' is larger than ' + maxFileBytes + ' bytes.');
-            return bytes;
-          });
-        }, function (err) {
+        return requestBytes(win, url.href, init, maxFileBytes).then(function (bytes) { return bytes; }, function (err) {
+          if (err && (err.code === 'LOAD_HTTP' || err.code === 'LOAD_TOO_LARGE')) throw err;
           var failure = crossOrigin
             ? hostError('LOAD_CORS', url.origin + ' did not let this page read ' + url.href + ' (CORS), or could not be reached.')
             : hostError('LOAD_NETWORK', url.href + ' could not be reached (' + (err && err.message ? err.message : err) + ').');

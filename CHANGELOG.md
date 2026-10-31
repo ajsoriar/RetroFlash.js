@@ -2,6 +2,11 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
+## Unreleased
+
+- Added `dist/retroflash-<version>.legacy.min.js`, an ES5 bundle for older browsers such as Chrome 38, with the few ES2015 functions the player calls (`tools/legacy-polyfills.js`).
+- Where a browser lacks them, the player now falls back from `fetch` to `XMLHttpRequest`, from `DecompressionStream` to a JavaScript zlib/DEFLATE decoder, from Pointer Events to mouse events, from `createImageBitmap` and `new ImageData` to an `<img>` element and `createImageData`, and from `DOMMatrix` and `Path2D.addPath` to mask paths built point by point.
+
 ## 1.0.0 — 2026-10-31
 
 - First stable version.

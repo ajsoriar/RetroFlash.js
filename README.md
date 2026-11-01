@@ -10,17 +10,13 @@
 ![Runtime dependencies](./assets/badges/dependencies.svg)
 ![Bundle size](./assets/badges/bundle.svg)
 
-**RetroFlash.js 1.0.1 is the current version. The first stable release was 1.0.0.** Review the [known limitations](./LIMITATIONS.md) for current SWF and ActionScript coverage.
-
 **RetroFlash.js** is an open-source Flash SWF player and ActionScript runtime designed to bring classic Flash content back to life in modern web browsers. Built entirely with vanilla JavaScript and HTML5 Canvas, it aims to reproduce original Flash animations, interactive applications, and games without requiring plugins, WebAssembly, or external dependencies. Its primary goal is to provide a lightweight, self-contained, drop-in replacement for the original Flash Player, allowing existing SWF content to run with minimal or no changes to the original HTML markup.
 
 ## Why RetroFlash.js?
 
 **A lightweight, dependency-free Flash SWF player and ActionScript runtime, built entirely in JavaScript and HTML5 Canvas.**
 
-Bringing classic Flash animations and games back to modern browsers — without plugins, WebAssembly, or native dependencies.
-
-RetroFlash.js is built around a simple idea: **preserve the original Flash experience with as little complexity as possible.**
+RetroFlash.js is built around the idea of bringing classic Flash animations and games back to modern browsers using pure JavaScript and HTML5 Canvas, without plugins, WebAssembly, or native dependencies, while preserving the original Flash experience with as little complexity as possible.
 
 - **100% Pure JavaScript** — No WebAssembly, native binaries, or browser plugins.
 - **Zero Dependencies** — No external runtime libraries or frameworks.
@@ -33,12 +29,6 @@ RetroFlash.js is built around a simple idea: **preserve the original Flash exper
 - **Modular Architecture** — Separate SWF parser, rendering engine, audio decoders, and ActionScript runtime.
 - **Developer-Friendly** — Readable, inspectable, and debuggable JavaScript.
 - **Progressive Compatibility** — Incremental support for classic SWF features and ActionScript functionality.
-
-### One script. No plugins. No WebAssembly.
-
-**Just JavaScript bringing Flash back to life.**
-
-*RetroFlash.js 1.0.1 is the current version. The first stable release was 1.0.0. SWF and ActionScript support remains limited to the features documented here.*
 
 ## Non-Invasive Flash Recovery
 
@@ -155,7 +145,7 @@ This project was developed extensively using AI-assisted coding tools, including
 
 AI was primarily responsible for generating source code, implementation details, and documentation, under human direction and supervision.
 
-<p align="center">
+<p align="left">
   <img src="./assets/badges/ai-assisted-chatgpt.svg" alt="AI assisted: ChatGPT" height="20">
   &nbsp;&nbsp;
   <img src="./assets/badges/ai-assisted-claude.svg" alt="AI assisted: Claude" height="20">

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SWF Asset Extractor</title>
+<link rel="stylesheet" href="extractor.css">
+</head>
+<body>
+<header>
+  <h1>SWF Asset Extractor</h1>
+  <p>Open a Flash movie (.swf) to list the images, vector shapes, sounds, fonts, texts and other resources stored in it, and download them in common formats. The file is read in this browser tab: it is never uploaded, and the movie's ActionScript is never run.</p>
+</header>
+
+<main>
+  <div id="drop" class="drop" role="button" tabindex="0" aria-describedby="drop-help">
+    <strong>Drop a .swf file here</strong>
+    <span id="drop-help">or press Enter, or click, to choose one</span>
+  </div>
+  <input id="file" type="file" accept=".swf,application/x-shockwave-flash" hidden>
+
+  <div id="status" class="status" role="status" aria-live="polite">No file selected.</div>
+  <progress id="progress" max="1" value="0" hidden></progress>
+
+  <section id="movie" hidden aria-labelledby="movie-title">
+    <h2 id="movie-title">Movie</h2>
+    <dl id="header" class="metrics"></dl>
+    <details id="diagnostics-box" hidden>
+      <summary id="diagnostics-summary">Reader notes</summary>
+      <table class="notes">
+        <thead><tr><th scope="col">Level</th><th scope="col">Code</th><th scope="col">Tag path</th><th scope="col">Message</th></tr></thead>
+        <tbody id="diagnostics"></tbody>
+      </table>
+    </details>
+  </section>
+
+  <section id="results" hidden aria-labelledby="results-title">
+    <div class="toolbar">
+      <h2 id="results-title">Resources</h2>
+      <label>Show <select id="filter"></select></label>
+    </div>
+    <p id="empty" class="empty" hidden></p>
+    <div class="tablewrap">
+      <table id="assets">
+        <thead>
+          <tr>
+            <th scope="col">Preview</th>
+            <th scope="col">Resource / type</th>
+            <th scope="col">Format / dimensions</th>
+            <th scope="col">Extracted size</th>
+            <th scope="col">SWF tag / path</th>
+            <th scope="col">Downloads</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>Part of RetroFlash.js. Converted files are what this tool could rebuild from the SWF data; each row says when a result is raw, approximate, partial or unsupported. Only extract resources you have the right to use.</p>
+</footer>
+
+<script src="swf-extractor-core.js"></script>
+<script src="extract.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

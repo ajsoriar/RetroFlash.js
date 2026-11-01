@@ -16,6 +16,10 @@ if (pkg.browser !== './dist/' + bundleName) {
   throw new Error('build: package.browser must be ./dist/' + bundleName);
 }
 
+function readText(file) {
+  return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+}
+
 // Runs a script the way a page would, in a fresh global object, and returns the globals it defined.
 function load(code, filename) {
   const sandbox = {};
@@ -30,7 +34,7 @@ function load(code, filename) {
 
 async function build() {
   const sources = {};
-  files.forEach((file) => { sources['src/' + file] = fs.readFileSync(path.join(root, 'src', file), 'utf8'); });
+  files.forEach((file) => { sources['src/' + file] = readText(path.join(root, 'src', file)); });
   const { RetroFlash, SWFReader } = load(Object.values(sources).join('\n'), 'sources');
   if (RetroFlash.version !== pkg.version) {
     throw new Error('build: package version ' + pkg.version + ' does not match RetroFlash.version ' + RetroFlash.version);
@@ -55,7 +59,7 @@ async function build() {
     presets: [[require.resolve('@babel/preset-env'), { targets: { chrome: '38' }, modules: false }]]
   });
   // The ES2015+ library functions the player calls that Chrome 38 lacks (Babel does not add them).
-  const browserPolyfills = fs.readFileSync(path.join(__dirname, 'browser-polyfills.js'), 'utf8').trim();
+  const browserPolyfills = readText(path.join(__dirname, 'browser-polyfills.js')).trim();
   const result = await minify({ [bundleName]: transpiled.code }, {
     compress: { passes: 2 },
     mangle: true,

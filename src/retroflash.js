@@ -1,4 +1,4 @@
-/* RetroFlash.js v1.0.1 - SWF player (browser classic script): the public API, RetroFlash.Player.
+/* RetroFlash.js v1.1.0 - SWF player (browser classic script): the public API, RetroFlash.Player.
    API: const player = new RetroFlash.Player({ canvas }); await player.load(file); player.play();
    Load swf-reader.js and the player modules first, in the order of src/modules.json, or load the single
    bundle dist/retroflash-<version>.min.js instead (npm run build).
@@ -68,6 +68,39 @@
   /* The reader lists ActionScript tags as unsupported (it never runs them); the player runs AVM1 itself, and
      the AVM2 subset of avm2/, reporting at run time what it cannot run. */
   var PLAYER_RUNS = { 'actionscript:DoAction': 1, 'actionscript:DoInitAction': 1, 'actionscript:DoABC': 1 };
+  /* How the stage fits the canvas when the page sizes it (the Player option `scaleMode`, the `scale` parameter
+     of legacy markup), as in Flash Player: showAll fits it whole, noBorder fills the canvas and crops,
+     exactFit stretches it, noScale keeps one stage pixel per CSS pixel. Names are matched in any case. */
+  var SCALE_MODES = { showall: 'showAll', noborder: 'noBorder', exactfit: 'exactFit', noscale: 'noScale' };
+  function scaleModeOf(value) {
+    if (value === undefined || value === null) return null;
+    var mode = SCALE_MODES[String(value).toLowerCase()];
+    if (!mode) throw playerError('INVALID_OPTION', 'scaleMode must be showAll, noBorder, exactFit or noScale');
+    return mode;
+  }
+  // Alignment of the stage in the canvas, as Flash's `salign`: any of T, B, L and R ('' centres it).
+  function alignOf(value) {
+    var align = String(value === undefined || value === null ? '' : value).toUpperCase();
+    if (!/^[TBLR]*$/.test(align)) throw playerError('INVALID_OPTION', 'align must be made of T, B, L and R');
+    return (align.indexOf('T') >= 0 ? 'T' : align.indexOf('B') >= 0 ? 'B' : '') + (align.indexOf('L') >= 0 ? 'L' : align.indexOf('R') >= 0 ? 'R' : '');
+  }
+  // A CSS length for the canvas: a number (or digits) is pixels; any other text is used as written ('100%').
+  function cssLengthOf(value, name) {
+    if (value === undefined || value === null) return null;
+    if (typeof value === 'number' ? value > 0 && isFinite(value) : /^\d+(?:\.\d+)?$/.test(String(value))) return Number(value) + 'px';
+    if (typeof value === 'string' && /^\s*[^\s;{}]+\s*$/.test(value)) return value.trim();
+    throw playerError('INVALID_OPTION', name + ' must be a positive number of pixels or a CSS length');
+  }
+  function canvasPixels(n) { return Math.max(1, Math.min(8192, Math.round(n))); }
+  // The size the page gives the canvas, in CSS pixels (the stage size when it is not laid out).
+  function displaySizeOf(canvas, swf) {
+    var rect = typeof canvas.getBoundingClientRect === 'function' ? canvas.getBoundingClientRect() : null;
+    if (rect && rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height };
+    return { width: Math.max(1, swf.width), height: Math.max(1, swf.height) };
+  }
+
+  // The players that are not destroyed, in creation order (RetroFlash.getInstances).
+  var instances = [], nextInstanceId = 1;
 
   function Player(options) {
     options = options || {};
@@ -91,8 +124,17 @@
       actions: options.actions !== false,
       input: options.input !== false,
       pixelRatio: options.pixelRatio || global.devicePixelRatio || 1,
-      maxCatchUpFrames: options.maxCatchUpFrames || 4
+      maxCatchUpFrames: options.maxCatchUpFrames || 4,
+      // Without a scaleMode the canvas takes the size of the stage; with one, it has its own size (see resize).
+      scaleMode: scaleModeOf(options.scaleMode),
+      align: alignOf(options.align),
+      width: cssLengthOf(options.width, 'width'),
+      height: cssLengthOf(options.height, 'height')
     };
+    this.id = nextInstanceId++;
+    // The stage in the canvas: device pixels per twip (sx, sy) and offset (tx, ty); set by resize().
+    this.view = null;
+    this.display = null;
     // Budgets against hostile files: maxNesting, maxInstances, maxBitmapPixels, maxTotalBitmapPixels,
     // maxActionBlocks and maxActionSteps (RetroFlash.defaultLimits).
     this.limits = resolveLimits(options);
@@ -119,6 +161,17 @@
     this.input = null;
     this.domHandlers = [];
     if (this.options.input && typeof this.canvas.addEventListener === 'function') this.attachInput();
+    // With a scale mode the stage follows the size the page gives the canvas, which a window resize can change.
+    if (typeof global.addEventListener === 'function' && typeof global.removeEventListener === 'function') {
+      var onResize = function () {
+        if (!self.options.scaleMode || !self.movie || self.state === 'destroyed') return;
+        self.resize();
+        self.render();
+      };
+      global.addEventListener('resize', onResize);
+      this.domHandlers.push(['resize', onResize, global]);
+    }
+    instances.push(this);
   }
   /* Pointer and keyboard on the canvas drive the movie's buttons. The canvas gets focus when pressed. Browsers
      without Pointer Events (Chrome before 55) use mouse events; the release is then heard on the document, as
@@ -130,10 +183,11 @@
       : { move: 'mousemove', leave: 'mouseleave', down: 'mousedown', up: 'mouseup' };
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;
     function on(type, fn, target) { (target || canvas).addEventListener(type, fn); self.domHandlers.push([type, fn, target || canvas]); }
+    // The pointer in stage twips: CSS pixels to canvas pixels, then back through the stage's place in the canvas.
     function point(e) {
-      var rect = canvas.getBoundingClientRect(), b = self.movie.swf.bounds;
-      return [b.xminTwips + ((e.clientX - rect.left) / rect.width) * (b.xmaxTwips - b.xminTwips),
-        b.yminTwips + ((e.clientY - rect.top) / rect.height) * (b.ymaxTwips - b.yminTwips)];
+      var rect = canvas.getBoundingClientRect(), b = self.movie.swf.bounds, v = self.view;
+      var x = (e.clientX - rect.left) * canvas.width / rect.width, y = (e.clientY - rect.top) * canvas.height / rect.height;
+      return [b.xminTwips + (x - v.tx) / v.sx, b.yminTwips + (y - v.ty) / v.sy];
     }
     function ready() {
       if (!self.input || !self.root || self.state === 'loading' || self.state === 'destroyed') return false;
@@ -339,12 +393,80 @@
     if (this.options.autoplay) this.play();
     return this.getInfo();
   };
+  /* Sizes the canvas for the loaded movie; call it (then render()) after the page changes the canvas's size by
+     other means than a window resize. Without a scaleMode the canvas takes the size of the stage: its CSS size
+     is set to the stage's. With one, the canvas has its own CSS size, as the <object> of legacy markup had: the
+     Player options width and height (CSS lengths: '100%', 1280), else its inline style, else the stage's. Its
+     pixels are the size it is laid out at times pixelRatio, and the stage is fitted into them by the scale mode
+     and alignment. */
   Player.prototype.resize = function () {
-    var swf = this.movie.swf, ratio = this.options.pixelRatio;
-    var width = Math.max(1, swf.width), height = Math.max(1, swf.height);
-    this.canvas.width = Math.max(1, Math.min(8192, Math.round(width * ratio)));
-    this.canvas.height = Math.max(1, Math.min(8192, Math.round(height * ratio)));
-    if (this.canvas.style) { this.canvas.style.width = width + 'px'; this.canvas.style.height = 'auto'; }
+    if (!this.movie) return this;
+    var canvas = this.canvas, swf = this.movie.swf, ratio = this.options.pixelRatio, style = canvas.style;
+    if (this.options.scaleMode) {
+      // An inline size is always set, so the canvas pixels never feed back into its CSS size.
+      if (style) {
+        style.width = this.options.width || (style.width && style.width !== 'auto' ? style.width : swf.width + 'px');
+        style.height = this.options.height || (style.height && style.height !== 'auto' ? style.height : swf.height + 'px');
+      }
+      this.display = displaySizeOf(canvas, swf);
+    } else {
+      this.display = { width: Math.max(1, swf.width), height: Math.max(1, swf.height) };
+      if (canvas.style) { canvas.style.width = this.display.width + 'px'; canvas.style.height = 'auto'; }
+    }
+    canvas.width = canvasPixels(this.display.width * ratio);
+    canvas.height = canvasPixels(this.display.height * ratio);
+    this.view = this.fitStage();
+    return this;
+  };
+  // Where the stage goes in the canvas: device pixels per twip and the offset of its top left corner.
+  Player.prototype.fitStage = function () {
+    var b = this.movie.swf.bounds, mode = this.options.scaleMode, align = this.options.align;
+    var w = Math.max(1, b.xmaxTwips - b.xminTwips), h = Math.max(1, b.ymaxTwips - b.yminTwips);
+    var W = this.canvas.width, H = this.canvas.height, sx = W / w, sy = H / h;
+    if (mode === 'showAll') sx = sy = Math.min(sx, sy);
+    else if (mode === 'noBorder') sx = sy = Math.max(sx, sy);
+    else if (mode === 'noScale') { sx = W / this.display.width / 20; sy = H / this.display.height / 20; }
+    var ax = align.indexOf('L') >= 0 ? 0 : align.indexOf('R') >= 0 ? 1 : 0.5;
+    var ay = align.indexOf('T') >= 0 ? 0 : align.indexOf('B') >= 0 ? 1 : 0.5;
+    return { sx: sx, sy: sy, tx: (W - w * sx) * ax, ty: (H - h * sy) * ay };
+  };
+  /* Changes how the stage fits the canvas (see the Player options scaleMode and align); null for the canvas to
+     take the size of the stage again. align is kept when it is not given. */
+  Player.prototype.setScaleMode = function (scaleMode, align) {
+    this.assertUsable();
+    var mode = scaleModeOf(scaleMode), nextAlign = align === undefined ? this.options.align : alignOf(align);
+    this.options.scaleMode = mode;
+    this.options.align = nextAlign;
+    if (this.movie) { this.resize(); this.render(); }
+    return this;
+  };
+  // The canvas's CSS size with a scale mode (the Player options width and height); null keeps the current one.
+  Player.prototype.setSize = function (width, height) {
+    this.assertUsable();
+    var w = cssLengthOf(width, 'width'), h = cssLengthOf(height, 'height');
+    if (w) this.options.width = w;
+    if (h) this.options.height = h;
+    if (this.movie) { this.resize(); this.render(); }
+    return this;
+  };
+  /* The size and place of the stage: the stage, the canvas's CSS size (display) and pixels (buffer), CSS pixels
+     per stage pixel (scale) and the CSS offset of the stage's top left corner in the canvas. */
+  Player.prototype.getLayout = function () {
+    var swf = this.movie && this.movie.swf, v = this.view, d = this.display, canvas = this.canvas;
+    var layout = {
+      scaleMode: this.options.scaleMode, align: this.options.align, pixelRatio: this.options.pixelRatio,
+      width: this.options.width, height: this.options.height,
+      stage: { width: swf ? swf.width : 0, height: swf ? swf.height : 0 },
+      display: d ? { width: d.width, height: d.height } : null,
+      buffer: { width: canvas.width, height: canvas.height },
+      scale: null, offset: null
+    };
+    if (v && d) {
+      var cssX = d.width / canvas.width, cssY = d.height / canvas.height;
+      layout.scale = { x: v.sx * 20 * cssX, y: v.sy * 20 * cssY };
+      layout.offset = { x: v.tx * cssX, y: v.ty * cssY };
+    }
+    return layout;
   };
   // Fresh root timeline at frame 1, with its frame scripts run (as when the movie starts).
   Player.prototype.restart = function () {
@@ -395,7 +517,7 @@
     var swf = this.movie.swf, b = swf.bounds;
     this.audio.sync();
     this.renderer.render({
-      background: swf.background, xMin: b.xminTwips, yMin: b.yminTwips, characters: this.movie.characters,
+      background: swf.background, xMin: b.xminTwips, yMin: b.yminTwips, characters: this.movie.characters, view: this.view,
       widthTwips: Math.max(1, b.xmaxTwips - b.xminTwips), heightTwips: Math.max(1, b.ymaxTwips - b.yminTwips)
     }, this.root);
   };
@@ -541,6 +663,8 @@
     this.domHandlers.forEach(function (h) { (h[2] || canvas).removeEventListener(h[0], h[1]); });
     this.domHandlers = [];
     this.state = 'destroyed';
+    var index = instances.indexOf(this);
+    if (index >= 0) instances.splice(index, 1);
     this.listeners = {};
     this.closeLoads();
     this.audio.close();
@@ -548,9 +672,66 @@
     this.movie = this.root = this.input = null;
   };
 
+  /* A snapshot of a player, for the console and tooling: its id, canvas and player, the movie (getInfo), where it
+     came from, its layout (getLayout) and how many warnings it has. */
+  function describeInstance(player) {
+    var canvas = player.canvas, diagnostics = player.getDiagnostics();
+    return Object.assign({
+      id: player.id,
+      elementId: canvas.id || null,
+      objectID: player.host && player.host.objectID ? player.host.objectID : null,
+      url: player.movieOptions.url || null,
+      source: typeof canvas.getAttribute === 'function' ? canvas.getAttribute('data-original-source') : null
+    }, player.getInfo(), {
+      layout: player.getLayout(),
+      volume: player.getVolume(),
+      unsupported: diagnostics.unsupported.length,
+      warnings: diagnostics.diagnostics.filter(function (d) { return d.level !== 'info'; }).length,
+      player: player,
+      canvas: canvas
+    });
+  }
+  // A player by its id, its canvas (or that canvas's id), or the objectID of its host; null when there is none.
+  function getInstance(key) {
+    for (var i = 0; i < instances.length; i++) {
+      var p = instances[i];
+      if (p.id === key || p.canvas === key) return p;
+      if (typeof key === 'string' && key && (p.canvas.id === key || (p.host && p.host.objectID === key))) return p;
+    }
+    return null;
+  }
+  // What the page runs on, as the player sees it: for checking a TV or an emulated device from the console.
+  function getEnvironment() {
+    var win = global, loc = win.location, nav = win.navigator, scr = win.screen;
+    var path2d = typeof win.Path2D === 'function' && win.Path2D.prototype;
+    return {
+      version: VERSION,
+      userAgent: nav ? nav.userAgent : null,
+      protocol: loc ? loc.protocol : null,
+      viewport: typeof win.innerWidth === 'number' ? { width: win.innerWidth, height: win.innerHeight } : null,
+      screen: scr ? { width: scr.width, height: scr.height } : null,
+      devicePixelRatio: win.devicePixelRatio || 1,
+      instances: instances.length,
+      features: {
+        fetch: typeof win.fetch === 'function',
+        XMLHttpRequest: typeof win.XMLHttpRequest === 'function',
+        PointerEvent: typeof win.PointerEvent === 'function',
+        WebAudio: typeof (win.AudioContext || win.webkitAudioContext) === 'function',
+        DecompressionStream: typeof win.DecompressionStream === 'function',
+        createImageBitmap: typeof win.createImageBitmap === 'function',
+        DOMMatrix: typeof win.DOMMatrix === 'function',
+        Path2DAddPath: !!path2d && typeof path2d.addPath === 'function'
+      }
+    };
+  }
+
   global.RetroFlash = Object.freeze({
     version: VERSION,
     Player: Player,
+    // The players on the page that are not destroyed, as snapshots (see describeInstance), in creation order.
+    getInstances: function () { return instances.map(describeInstance); },
+    getInstance: getInstance,
+    getEnvironment: getEnvironment,
     defaultLimits: DEFAULT_LIMITS,
     createBrowserHost: M.createBrowserHost,
     createWebAudioBackend: M.createWebAudioBackend,

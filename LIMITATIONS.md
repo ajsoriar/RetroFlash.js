@@ -1,6 +1,6 @@
 # Limitations
 
-What RetroFlash.js does not do yet, or does only in part, grouped by subject. It covers SWFReader 0.6.0 and RetroFlash.Player 1.0.1, as of 2026-10-31.
+What RetroFlash.js does not do yet, or does only in part, grouped by subject. It covers SWFReader 0.6.0 and RetroFlash.Player 1.1.0, as of 2026-11-02.
 
 Most of these are reported at run time in `player.getDiagnostics().unsupported`; the feature name appears in brackets. The supported features are summarized in [`docs/README.md`](./docs/README.md), and their verification is documented in [`tests/COMPATIBILITY.md`](./tests/COMPATIBILITY.md).
 
@@ -19,7 +19,7 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 8. A movie is read and prepared in full before it plays. There is no progressive loading: `_framesloaded` is always the total, and `ifFrameLoaded` (`WaitForFrame`) is always true.
 9. Frames follow `requestAnimationFrame` at the SWF frame rate. When the page falls behind, at most 4 frames (`maxCatchUpFrames`) are caught up per animation frame and the rest are dropped.
 10. A timeline is never slowed down or sped up to follow its stream sound, as Flash Player did. A stream that drifts more than about one second from its timeline starts again where the timeline is.
-11. The canvas takes the size of the stage (times `devicePixelRatio`). There are no stage scale modes: `Stage.scaleMode` is always `"showAll"`, and `Stage` sends no resize events.
+11. The page's scale mode (`scale` / `scaleMode`) fits the stage into the canvas, but scripts do not see it: `Stage.scaleMode` is always `"showAll"`, `Stage.width` and `Stage.height` are always the stage's, and `Stage` sends no resize events. Content outside the stage is drawn in the letterbox bands. A canvas resized by other means than a window resize needs `player.resize()` and `player.render()`.
 12. The whole stage is redrawn every frame (no dirty rectangles), and every shape is filled again each time. Performance has not been measured or tuned.
 
 ## Vector drawing
@@ -112,8 +112,8 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 59. `SharedObject` is not implemented, so nothing a movie saves persists.
 60. Legacy `<object>`/`<embed>` markup:
     - on `file://` pages it plays only where the browser lets the page read local files (TV and packaged app platforms such as webOS); desktop browsers usually refuse, so serve the page over HTTP or HTTPS;
-    - only `movie`/`src`/`data`, `base`, `FlashVars`, `allowScriptAccess`, `allowNetworking`, and `bgcolor` are honoured; `scale`, `salign`, `wmode`, `quality`, `menu`, `play`, `loop`, and the other parameters are ignored;
-    - the canvas takes the stage size once the movie loads.
+    - only the element's size and `movie`/`src`/`data`, `base`, `FlashVars`, `allowScriptAccess`, `allowNetworking`, `bgcolor`, `scale`, and `salign` are honoured; `wmode`, `quality`, `menu`, `play`, `loop`, and the other parameters are ignored;
+    - a percentage size is relative to the element's container, which needs a size of its own (for `height="100%"`, the page's `html` and `body`).
 61. Pop-up windows from `getURL` are subject to the browser's pop-up blocker.
 
 ## Video and ActionScript 3

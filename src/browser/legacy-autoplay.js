@@ -2,9 +2,10 @@
    Each Flash <object> or <embed> is replaced by a canvas that plays its SWF, embedded as the plugin was: the
    browser host (RetroFlash.createBrowserHost) opens the pages the movie asks for, calls page functions for
    javascript: URLs and ExternalInterface, sends FSCommands to `<id>_DoFSCommand`, and loads what scripts load
-   under the browser's CORS rules. The element's parameters are honoured: movie/src/data, base, FlashVars,
-   allowScriptAccess, allowNetworking, bgcolor. Optional page settings: window.RetroFlashConfig (see
-   the legacy object/embed markup API). */
+   under the browser's CORS rules. The element's size (pixels or percent) and parameters are honoured:
+   movie/src/data, base, FlashVars, allowScriptAccess, allowNetworking, bgcolor, scale and salign. Optional page
+   settings: window.RetroFlashConfig (see the legacy object/embed markup API), including scaleMode, align and
+   pixelRatio, which override the markup's. The players are listed by RetroFlash.getInstances(). */
 (function (global) {
   'use strict';
 
@@ -58,6 +59,20 @@
     var dimension = name === 'width' ? rect.width : rect.height;
     return dimension > 0 ? Math.max(1, Math.round(dimension)) : fallback;
   }
+
+  // The element's size as CSS, as the plugin took it: pixels ("1920", "1920px") or a percentage ("100%").
+  function cssDimension(element, name, fallback) {
+    var value = String(element.getAttribute(name) || '').trim();
+    if (/^\d+(?:\.\d+)?(?:px)?$/i.test(value)) return Math.max(1, Math.round(parseFloat(value))) + 'px';
+    if (/^\d+(?:\.\d+)?%$/.test(value)) return value;
+    return numericDimension(element, name, fallback) + 'px';
+  }
+
+  // The `scale` parameter: showall (the plugin's default), noborder, exactfit or noscale.
+  var SCALE_PARAMS = { showall: 'showAll', noborder: 'noBorder', exactfit: 'exactFit', noscale: 'noScale' };
+  function scaleModeOf(value) { return SCALE_PARAMS[String(value || '').toLowerCase()] || 'showAll'; }
+  // The `salign` parameter (T, B, L, R, TL, TR, BL, BR); anything else centres the movie.
+  function alignOf(value) { return /^[TBLR]*$/i.test(String(value || '')) ? String(value || '').toUpperCase() : ''; }
 
   /* allowScriptAccess as the plugin read it: "always" allows scripting the page, "never" refuses it, and
      "sameDomain" (the default) allows it when the SWF comes from the page's origin; local files (file:) have no
@@ -124,11 +139,12 @@
       'for "' + source + '" (' + numericDimension(element, 'width', 300) + 'x' +
       numericDimension(element, 'height', 150) + ').');
 
+    // The canvas keeps the element's size, in pixels or percent, and the movie is fitted into it by `scale`.
     var canvas = global.document.createElement('canvas');
     canvas.width = numericDimension(element, 'width', 300);
     canvas.height = numericDimension(element, 'height', 150);
-    canvas.style.width = canvas.width + 'px';
-    canvas.style.height = canvas.height + 'px';
+    canvas.style.width = cssDimension(element, 'width', 300);
+    canvas.style.height = cssDimension(element, 'height', 150);
     canvas.style.display = 'inline-block';
     canvas.style.border = '0';
     canvas.style.outline = 'none';
@@ -159,7 +175,11 @@
         allowNetworking: config.allowNetworking || paramOf(element, 'allowNetworking') || 'all',
         rewriteUrl: config.rewriteUrl
       });
-      var player = new global.RetroFlash.Player({ canvas: canvas, autoplay: config.autoplay !== false, host: host });
+      var player = new global.RetroFlash.Player({
+        canvas: canvas, autoplay: config.autoplay !== false, host: host, pixelRatio: config.pixelRatio,
+        scaleMode: config.scaleMode || scaleModeOf(paramOf(element, 'scale')),
+        align: config.align !== undefined ? config.align : alignOf(paramOf(element, 'salign'))
+      });
       player.on('error', function () { playerReportedError = true; });
       exposeCallbacks(canvas, player);
       logInteractions(player);

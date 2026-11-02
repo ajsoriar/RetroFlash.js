@@ -2,9 +2,11 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
-## Unreleased
+## 1.1.0 — 2026-11-02
 
 - Legacy `<object>`/`<embed>` markup also plays on `file://` pages, where the browser lets the page read local files (TV and packaged app platforms such as webOS). The browser host reads `file:` URLs with `XMLHttpRequest`, accepts the status 0 of a local read, treats a local SWF on a local page as the same domain for `allowScriptAccess`, and reports a refused local read as `load:file`.
+- Stage scale modes, as in Flash Player. Legacy markup keeps the size of its element (pixels or percent) instead of taking the stage's, and fits the movie into it by its `scale` and `salign` parameters (`showAll` by default); `window.RetroFlashConfig` can set `scaleMode`, `align` and `pixelRatio`. The Player options `scaleMode`, `align`, `width` and `height`, and `setScaleMode()`, `setSize()` and `getLayout()`, do the same for a player created by hand; without `scaleMode` the canvas still takes the size of the stage. The canvas follows window resizes, its pixels follow its displayed size times `pixelRatio`, and the pointer is read through the stage's place in the canvas.
+- `RetroFlash.getInstances()`, `RetroFlash.getInstance(key)` and `RetroFlash.getEnvironment()` list the players of the page and describe the browser, for the console and tooling. Each player has an `id`.
 
 ## 1.0.1 — 2026-10-31
 

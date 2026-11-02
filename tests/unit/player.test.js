@@ -154,5 +154,111 @@ test('timelines: removal, rewind keeps matching instances, root loop reports the
 
 test('Player requires a canvas', () => {
   assert.throws(() => new RetroFlash.Player({}), (err) => err.name === 'RetroFlashError' && err.code === 'INVALID_OPTION');
-  assert.strictEqual(RetroFlash.version, '1.0.1');
+  assert.strictEqual(RetroFlash.version, '1.1.0');
+});
+
+// ---- Layout: scale modes and alignment; the players of the page ----
+
+const B = require('../support/swf-builder');
+if (!globalThis.Path2D) globalThis.Path2D = class { addPath() {} moveTo() {} lineTo() {} quadraticCurveTo() {} closePath() {} };
+const stage1080 = () => B.swf({ stage: { xMax: 1920 * 20, yMax: 1080 * 20 }, tags: [B.tag(B.T.ShowFrame), B.tag(B.T.End)] });
+// A player whose canvas the page lays out at `box` CSS pixels.
+function laidOutPlayer(box, options) {
+  const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : () => ({ addColorStop() {} })), set: (t, k, v) => { t[k] = v; return true; } });
+  const canvas = { id: 'stage', getContext: () => ctx, style: {}, width: 300, height: 150, getBoundingClientRect: () => ({ left: 0, top: 0, width: box.width, height: box.height }) };
+  return new RetroFlash.Player(Object.assign({ canvas, input: false, audio: false, pixelRatio: 1 }, options));
+}
+const rounded = (p) => p && { x: Math.round(p.x * 1000) / 1000 + 0, y: Math.round(p.y * 1000) / 1000 + 0 };
+async function layoutIn(box, options) {
+  const player = laidOutPlayer(box, options);
+  await player.load(stage1080());
+  const layout = player.getLayout();
+  player.destroy();
+  return [rounded(layout.scale), rounded(layout.offset), layout.buffer.width, layout.buffer.height];
+}
+
+test('layout: without a scale mode the canvas takes the size of the stage', async () => {
+  const player = laidOutPlayer({ width: 1280, height: 720 });
+  await player.load(stage1080());
+  const { canvas } = player, layout = player.getLayout();
+  assert.deepStrictEqual([canvas.width, canvas.height, canvas.style.width, canvas.style.height], [1920, 1080, '1920px', 'auto']);
+  assert.deepStrictEqual([layout.scaleMode, layout.align, layout.stage, layout.display], [null, '', { width: 1920, height: 1080 }, { width: 1920, height: 1080 }]);
+  assert.deepStrictEqual([rounded(layout.scale), rounded(layout.offset)], [{ x: 1, y: 1 }, { x: 0, y: 0 }]);
+  player.destroy();
+});
+
+test('layout: scale modes and alignment fit a 1920x1080 stage into the canvas the page sizes', async () => {
+  assert.deepStrictEqual(await layoutIn({ width: 1280, height: 720 }, { scaleMode: 'showAll' }), [{ x: 0.667, y: 0.667 }, { x: 0, y: 0 }, 1280, 720]);
+  assert.deepStrictEqual(await layoutIn({ width: 1280, height: 720 }, { scaleMode: 'showAll', pixelRatio: 2 }), [{ x: 0.667, y: 0.667 }, { x: 0, y: 0 }, 2560, 1440], 'canvas pixels follow pixelRatio');
+  const box = { width: 1024, height: 768 };
+  assert.deepStrictEqual(await layoutIn(box, { scaleMode: 'SHOWALL' }), [{ x: 0.533, y: 0.533 }, { x: 0, y: 96 }, 1024, 768], 'letterboxed, centred');
+  assert.deepStrictEqual(await layoutIn(box, { scaleMode: 'showAll', align: 't' }), [{ x: 0.533, y: 0.533 }, { x: 0, y: 0 }, 1024, 768]);
+  assert.deepStrictEqual(await layoutIn(box, { scaleMode: 'showAll', align: 'B' }), [{ x: 0.533, y: 0.533 }, { x: 0, y: 192 }, 1024, 768]);
+  assert.deepStrictEqual(await layoutIn(box, { scaleMode: 'noBorder' }), [{ x: 0.711, y: 0.711 }, { x: -170.667, y: 0 }, 1024, 768], 'cropped');
+  assert.deepStrictEqual(await layoutIn(box, { scaleMode: 'exactFit' }), [{ x: 0.533, y: 0.711 }, { x: 0, y: 0 }, 1024, 768], 'stretched');
+  assert.deepStrictEqual(await layoutIn(box, { scaleMode: 'noScale' }), [{ x: 1, y: 1 }, { x: -448, y: -156 }, 1024, 768]);
+  assert.deepStrictEqual(await layoutIn(box, { scaleMode: 'noScale', align: 'TL' }), [{ x: 1, y: 1 }, { x: 0, y: 0 }, 1024, 768]);
+});
+
+test('layout: with a scale mode the canvas keeps a CSS size: the width/height options, its inline style, or the stage', async () => {
+  const sized = laidOutPlayer({ width: 1280, height: 720 }, { scaleMode: 'showAll', width: '100%', height: 720 });
+  await sized.load(stage1080());
+  assert.deepStrictEqual([sized.canvas.style.width, sized.canvas.style.height, sized.getLayout().width], ['100%', '720px', '100%']);
+  sized.setSize('50vw', null);
+  assert.deepStrictEqual([sized.canvas.style.width, sized.canvas.style.height], ['50vw', '720px']);
+  sized.destroy();
+  const inline = laidOutPlayer({ width: 640, height: 360 }, { scaleMode: 'showAll' });
+  inline.canvas.style.width = '640px';
+  inline.canvas.style.height = '360px';
+  await inline.load(stage1080());
+  assert.deepStrictEqual([inline.canvas.style.width, inline.canvas.style.height, inline.canvas.width], ['640px', '360px', 640]);
+  inline.setScaleMode(null);
+  assert.deepStrictEqual([inline.canvas.style.width, inline.canvas.width, inline.getLayout().scaleMode], ['1920px', 1920, null], 'back to the stage size');
+  inline.setScaleMode('exactFit', 'BR');
+  assert.deepStrictEqual([inline.getLayout().scaleMode, inline.getLayout().align], ['exactFit', 'BR']);
+  assert.throws(() => inline.setScaleMode('zoom'), (e) => e.code === 'INVALID_OPTION');
+  inline.destroy();
+  for (const bad of [{ scaleMode: 'fit' }, { align: 'C' }, { width: -1 }, { height: 'a;b' }]) {
+    assert.throws(() => laidOutPlayer({ width: 1, height: 1 }, bad), (e) => e.code === 'INVALID_OPTION', JSON.stringify(bad));
+  }
+});
+
+test('RetroFlash.getInstances lists the players of the page until they are destroyed; getInstance finds one', async () => {
+  const before = RetroFlash.getInstances().length;
+  const player = laidOutPlayer({ width: 960, height: 540 }, { scaleMode: 'showAll', host: { objectID: 'movie1' } });
+  await player.load(stage1080(), { url: 'file:///apps/app/test2.swf' });
+  const listed = RetroFlash.getInstances();
+  assert.strictEqual(listed.length, before + 1);
+  const item = listed[listed.length - 1];
+  assert.deepStrictEqual(
+    [item.id, item.elementId, item.objectID, item.url, item.state, item.width, item.height, item.frameCount, item.volume, item.unsupported],
+    [player.id, 'stage', 'movie1', 'file:///apps/app/test2.swf', 'ready', 1920, 1080, 1, 1, 0]);
+  assert.deepStrictEqual([item.player, item.canvas, item.layout.scaleMode, item.layout.scale.x], [player, player.canvas, 'showAll', 0.5]);
+  for (const key of [player.id, 'stage', 'movie1', player.canvas]) assert.strictEqual(RetroFlash.getInstance(key), player, String(key));
+  assert.strictEqual(RetroFlash.getInstance('nothing'), null);
+  player.destroy();
+  assert.strictEqual(RetroFlash.getInstances().length, before);
+  assert.strictEqual(RetroFlash.getInstance(player.id), null);
+});
+
+test('RetroFlash.getEnvironment describes what the page runs on', () => {
+  const env = RetroFlash.getEnvironment();
+  assert.strictEqual(env.version, RetroFlash.version);
+  assert.strictEqual(typeof env.devicePixelRatio, 'number');
+  assert.strictEqual(env.instances, RetroFlash.getInstances().length);
+  assert.deepStrictEqual(Object.keys(env.features), ['fetch', 'XMLHttpRequest', 'PointerEvent', 'WebAudio', 'DecompressionStream', 'createImageBitmap', 'DOMMatrix', 'Path2DAddPath']);
+  assert.ok(Object.values(env.features).every((v) => typeof v === 'boolean'));
+});
+
+test('layout: the pointer is read through the stage\'s place in the canvas, letterbox included', async () => {
+  const handlers = {};
+  const player = laidOutPlayer({ width: 1024, height: 768 }, { scaleMode: 'showAll', input: true, pixelRatio: 2 });
+  Object.assign(player.canvas, { addEventListener: (type, fn) => { handlers[type] = fn; }, removeEventListener() {} });
+  player.attachInput();
+  await player.load(stage1080());
+  handlers.pointermove({ clientX: 512, clientY: 96 + 288 });
+  assert.deepStrictEqual([Math.round(player.input.x), Math.round(player.input.y)], [19200, 10800], 'the centre of the canvas is the centre of the stage');
+  handlers.pointermove({ clientX: 0, clientY: 50 });
+  assert.deepStrictEqual([Math.round(player.input.x), Math.round(player.input.y)], [0, -1725], 'the band above the stage is outside it');
+  player.destroy();
 });

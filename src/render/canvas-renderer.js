@@ -82,13 +82,15 @@
     ctx.globalAlpha = 1;
     ctx.fillStyle = bg ? 'rgb(' + bg.r + ',' + bg.g + ',' + bg.b + ')' : '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    var sx = canvas.width / stage.widthTwips, sy = canvas.height / stage.heightTwips;
+    // stage.view places the stage in the canvas (the player's scale mode); without it the stage fills the canvas.
+    var view = stage.view || { sx: canvas.width / stage.widthTwips, sy: canvas.height / stage.heightTwips, tx: 0, ty: 0 };
+    var sx = view.sx, sy = view.sy;
     this.stageX = sx; // device pixels per twip at stage level (non-scaling strokes, 9-slice scaling)
     this.stageY = sy;
     // The root's own display object holds what scripts set on _root (_x, _alpha, _visible, ...).
     var top = root.displayObject();
     if (top.visible === false) return;
-    this.drawClip(root, multiply([sx, 0, 0, sy, -stage.xMin * sx, -stage.yMin * sy], top.matrix), top.cx);
+    this.drawClip(root, multiply([sx, 0, 0, sy, view.tx - stage.xMin * sx, view.ty - stage.yMin * sy], top.matrix), top.cx);
   };
   /* A clip or button instance. Its bitmap fills and fonts come from its own movie (one loaded into a clip has its
      own). `nine` is its 9-slice mapping (see nineSlice), or null. */

@@ -60,11 +60,13 @@
   }
 
   /* allowScriptAccess as the plugin read it: "always" allows scripting the page, "never" refuses it, and
-     "sameDomain" (the default) allows it when the SWF comes from the page's origin. */
+     "sameDomain" (the default) allows it when the SWF comes from the page's origin; local files (file:) have no
+     origin, so a local SWF on a local page counts as the same domain. */
   function scriptAccessOf(value, swfUrl) {
     value = String(value || 'sameDomain').toLowerCase();
     if (value === 'always') return true;
     if (value === 'never') return false;
+    if (swfUrl.protocol === 'file:') return global.location.protocol === 'file:';
     return swfUrl.origin === global.location.origin;
   }
 
@@ -144,7 +146,8 @@
     var playerReportedError = false;
     try {
       var location = global.location;
-      if (!location || (location.protocol !== 'http:' && location.protocol !== 'https:')) {
+      // On file: pages the SWF loads only where the browser lets the page read local files (see host.js).
+      if (!location || (location.protocol !== 'http:' && location.protocol !== 'https:' && location.protocol !== 'file:')) {
         throw new Error('Serve this page over HTTP or HTTPS to load a SWF automatically.');
       }
       var swfUrl = new URL(source, location.href);

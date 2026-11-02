@@ -65,6 +65,7 @@
     LOAD_REFUSED: ['load:refused', 'The host page did not give a URL a script loads.'],
     LOAD_CORS: ['load:cors', 'The server did not let this page read a URL a script loads (CORS), or it could not be reached; nothing was loaded.'],
     LOAD_NETWORK: ['load:network', 'A URL a script loads could not be reached; nothing was loaded.'],
+    LOAD_FILE: ['load:file', 'The browser did not let this page read a local file (file:) a script loads; nothing was loaded.'],
     LOAD_HTTP: ['load:http', 'The server answered a URL a script loads with an error; nothing was loaded.'],
     LOAD_BLOCKED: ['load:blocked', 'The host page does not let the movie load URLs (allowNetworking); nothing was loaded.'],
     INVALID_URL: ['load:invalidURL', 'A script loads a URL that is not valid; nothing was loaded.']

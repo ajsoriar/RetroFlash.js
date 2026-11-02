@@ -2,6 +2,10 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
+## Unreleased
+
+- Legacy `<object>`/`<embed>` markup also plays on `file://` pages, where the browser lets the page read local files (TV and packaged app platforms such as webOS). The browser host reads `file:` URLs with `XMLHttpRequest`, accepts the status 0 of a local read, treats a local SWF on a local page as the same domain for `allowScriptAccess`, and reports a refused local read as `load:file`.
+
 ## 1.0.1 — 2026-10-31
 
 - The browser bundle uses ES5 syntax and compatibility fallbacks to target Chrome 38 and later.

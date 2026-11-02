@@ -8,7 +8,8 @@
    - fscommand: calls the page's `<objectID>_DoFSCommand(command, args)`;
    - load: fetches what scripts load (loadMovie, loadVariables), using XMLHttpRequest when fetch is unavailable.
      Cross-origin responses can only be read when the server allows it (CORS); an image the page may show but
-     not read is shown as it is.
+     not read is shown as it is. Local files (file:) are read with XMLHttpRequest, where the browser lets the
+     page read them (TV and packaged apps, such as webOS; desktop browsers usually refuse).
    Relative URLs resolve against `base` (by default the page, as in Flash Player). */
 (function (global) {
   'use strict';
@@ -26,8 +27,10 @@
     return err;
   }
 
+  // fetch does not read local files, so file: URLs always go through XMLHttpRequest.
   function requestBytes(win, url, init, maxFileBytes) {
-    if (typeof win.fetch === 'function') {
+    var local = /^file:/i.test(url);
+    if (typeof win.fetch === 'function' && !local) {
       return Promise.resolve().then(function () { return win.fetch(url, init); }).then(function (response) {
         if (!response.ok) throw hostError('LOAD_HTTP', 'HTTP ' + response.status + ' for ' + url);
         var length = Number(response.headers && response.headers.get('content-length'));
@@ -60,7 +63,13 @@
         }
       };
       xhr.onload = function () {
-        if (xhr.status < 200 || xhr.status >= 300) {
+        // A local file that is read answers with status 0 and the bytes.
+        if (local && xhr.status === 0) {
+          if (!xhr.response) {
+            fail(new Error('The file could not be read'));
+            return;
+          }
+        } else if (xhr.status < 200 || xhr.status >= 300) {
           fail(hostError('LOAD_HTTP', 'HTTP ' + xhr.status + ' for ' + url));
           return;
         }
@@ -196,7 +205,8 @@
         if (networking === 'none') return Promise.reject(hostError('LOAD_BLOCKED', 'allowNetworking="none" does not let the movie load ' + request.url + '.'));
         var url;
         try { url = resolve(request.url, request); } catch (err) { return Promise.reject(err); }
-        var crossOrigin = url.origin !== origin(), method = request.method || 'GET';
+        var local = url.protocol === 'file:';
+        var crossOrigin = !local && url.origin !== origin(), method = request.method || 'GET';
         var init = { method: method, mode: 'cors', credentials: 'same-origin', redirect: 'follow' };
         if (method === 'POST') {
           init.body = request.body || '';
@@ -204,11 +214,13 @@
         }
         return requestBytes(win, url.href, init, maxFileBytes).then(function (bytes) { return bytes; }, function (err) {
           if (err && (err.code === 'LOAD_HTTP' || err.code === 'LOAD_TOO_LARGE')) throw err;
-          var failure = crossOrigin
-            ? hostError('LOAD_CORS', url.origin + ' did not let this page read ' + url.href + ' (CORS), or could not be reached.')
-            : hostError('LOAD_NETWORK', url.href + ' could not be reached (' + (err && err.message ? err.message : err) + ').');
-          // The browser may still show a cross-origin image it does not let the page read.
-          if (!crossOrigin || request.type !== 'movie' || method !== 'GET' || typeof win.Image !== 'function') throw failure;
+          var failure = local
+            ? hostError('LOAD_FILE', 'The browser did not let this page read the local file ' + url.href + '; serve the page over HTTP or HTTPS.')
+            : crossOrigin
+              ? hostError('LOAD_CORS', url.origin + ' did not let this page read ' + url.href + ' (CORS), or could not be reached.')
+              : hostError('LOAD_NETWORK', url.href + ' could not be reached (' + (err && err.message ? err.message : err) + ').');
+          // The browser may still show a cross-origin or local image it does not let the page read.
+          if (!(crossOrigin || local) || request.type !== 'movie' || method !== 'GET' || typeof win.Image !== 'function') throw failure;
           return loadImage(win, url.href).catch(function () { throw failure; });
         });
       }

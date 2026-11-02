@@ -107,11 +107,11 @@ Most of these are reported at run time in `player.getDiagnostics().unsupported`;
 
 55. Loads into levels other than `_level0` (`loadMovieNum(url, 1)`, …) are not supported [`load:level`].
 56. At most 8 loads can wait for the host at once; more are dropped [`load:limit`].
-57. The player never fetches anything by itself: without a `loader` or `host.load`, nothing loads [`load:noLoader`]. With the browser host, cross-origin files load only when CORS allows them [`load:cors`]. A cross-origin image can be shown, but its pixels cannot be read.
+57. The player never fetches anything by itself: without a `loader` or `host.load`, nothing loads [`load:noLoader`]. With the browser host, cross-origin files load only when CORS allows them [`load:cors`]. A cross-origin image can be shown, but its pixels cannot be read. Local files (`file:`) load only where the browser lets the page read them, as TV and packaged app platforms such as webOS do; desktop browsers usually refuse [`load:file`].
 58. `javascript:` URLs run only calls of page functions with literal arguments. Anything else is refused [`browser:javascriptUnsupported`] and is never evaluated.
 59. `SharedObject` is not implemented, so nothing a movie saves persists.
 60. Legacy `<object>`/`<embed>` markup:
-    - it plays only on pages served over HTTP or HTTPS (not `file://`);
+    - on `file://` pages it plays only where the browser lets the page read local files (TV and packaged app platforms such as webOS); desktop browsers usually refuse, so serve the page over HTTP or HTTPS;
     - only `movie`/`src`/`data`, `base`, `FlashVars`, `allowScriptAccess`, `allowNetworking`, and `bgcolor` are honoured; `scale`, `salign`, `wmode`, `quality`, `menu`, `play`, `loop`, and the other parameters are ignored;
     - the canvas takes the stage size once the movie loads.
 61. Pop-up windows from `getURL` are subject to the browser's pop-up blocker.

@@ -429,6 +429,38 @@ test('browser host: loads use fetch with CORS; a refused cross-origin read is a 
   assert.deepStrictEqual([element.href, element.naturalWidth], ['http://www.infodesa.es/img2.jpg', 4]);
 });
 
+test('browser host: local files (file:) are read with XMLHttpRequest, where a read answers with status 0', async () => {
+  const files = { 'file:///apps/app/visor.swf': [4, 5], 'file:///apps/app/empty.txt': null, 'https://site.test/zero.swf': [6] };
+  const opened = [], fetched = [];
+  class StandInXHR {
+    open(method, url) { this.url = url; opened.push(url); }
+    setRequestHeader() {}
+    getResponseHeader() { return null; }
+    send() {
+      setTimeout(() => {
+        if (!(this.url in files)) return this.onerror();
+        this.status = 0;
+        this.response = files[this.url] && Uint8Array.from(files[this.url]).buffer;
+        this.onload();
+      }, 0);
+    }
+  }
+  const { win } = standInWindow({ fetch: async (url) => { fetched.push(url); return response([9]); } });
+  Object.assign(win, { XMLHttpRequest: StandInXHR, location: { origin: 'null', protocol: 'file:', href: 'file:///apps/app/index.html' } });
+  win.document.baseURI = win.location.href;
+  const host = RetroFlash.createBrowserHost({ window: win });
+  const loadCode = (request, h = host) => h.load(request).then(() => null, (e) => e.code);
+  assert.deepStrictEqual([...new Uint8Array(await host.load({ url: 'visor.swf', type: 'movie' }))], [4, 5]);
+  assert.strictEqual(await loadCode({ url: 'empty.txt', type: 'variables' }), 'LOAD_FILE', 'status 0 with nothing read');
+  assert.strictEqual(await loadCode({ url: 'missing.swf', type: 'movie' }), 'LOAD_FILE', 'a read the browser refuses');
+  assert.deepStrictEqual(fetched, [], 'fetch does not read local files');
+  assert.deepStrictEqual(opened, ['file:///apps/app/visor.swf', 'file:///apps/app/empty.txt', 'file:///apps/app/missing.swf']);
+  // Over HTTP, status 0 is still a failed request.
+  const remote = standInWindow();
+  Object.assign(remote.win, { fetch: undefined, XMLHttpRequest: StandInXHR });
+  assert.strictEqual(await loadCode({ url: 'https://site.test/zero.swf', type: 'variables' }, RetroFlash.createBrowserHost({ window: remote.win })), 'LOAD_HTTP');
+});
+
 test('browser host: rewriteUrl serves remote resources from local copies', async () => {
   const fetched = [];
   const { win } = standInWindow({ fetch: async (url) => { fetched.push(url); return response([9]); } });
@@ -442,7 +474,7 @@ test('browser host: rewriteUrl serves remote resources from local copies', async
 
 test('loads: host errors are reported by kind, the clip is left empty, and a decoded image is shown', async () => {
   const fail = (code) => { const e = new Error(code + ' detail'); e.code = code; return Promise.reject(e); };
-  const codes = ['LOAD_CORS', 'LOAD_HTTP', 'LOAD_NETWORK', 'LOAD_BLOCKED', 'INVALID_URL'];
+  const codes = ['LOAD_CORS', 'LOAD_HTTP', 'LOAD_NETWORK', 'LOAD_FILE', 'LOAD_BLOCKED', 'INVALID_URL'];
   for (const code of codes) {
     const movie = new I.Movie(await SWFReader.load(fixture()));
     const reported = [];
@@ -452,7 +484,7 @@ test('loads: host errors are reported by kind, the clip is left empty, and a dec
     env.scripts.run();
     await env.loads.idle();
     env.loads.apply();
-    assert.deepStrictEqual(reported, [{ LOAD_CORS: 'load:cors', LOAD_HTTP: 'load:http', LOAD_NETWORK: 'load:network', LOAD_BLOCKED: 'load:blocked', INVALID_URL: 'load:invalidURL' }[code]]);
+    assert.deepStrictEqual(reported, [{ LOAD_CORS: 'load:cors', LOAD_HTTP: 'load:http', LOAD_NETWORK: 'load:network', LOAD_FILE: 'load:file', LOAD_BLOCKED: 'load:blocked', INVALID_URL: 'load:invalidURL' }[code]]);
     assert.strictEqual(root.childByName('square').displayList.size, 0);
     assert.strictEqual(root.childByName('contenedor').frameCount(), 2, 'other loads are not affected');
   }

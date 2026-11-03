@@ -1,6 +1,6 @@
 # JavaScript ↔ ActionScript interoperability: status
 
-The aim: an existing SWF, its existing HTML page and a single RetroFlash.js script keep talking to each other as they did through the Flash Player plugin, without changes to the SWF, its ActionScript or the page's scripts. This page lists what works, what works in part, what does not work yet, the player hooks behind each mechanism, and how it is tested. It covers RetroFlash.Player 1.1.1.
+The aim: an existing SWF, its existing HTML page and a single RetroFlash.js script keep talking to each other as they did through the Flash Player plugin, without changes to the SWF, its ActionScript or the page's scripts. This page lists what works, what works in part, what does not work yet, the player hooks behind each mechanism, and how it is tested. It covers RetroFlash.Player 1.1.2.
 
 RetroFlash.js reproduces the **JavaScript surface** of the plugin (the methods on the `<object>`/`<embed>` element, the page functions it called). It does not emulate NPAPI or ActiveX. It never evaluates text from a movie as JavaScript, unless the page passes its own executor for `javascript:` URLs (see [Security](#security-model)).
 

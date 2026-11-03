@@ -50,7 +50,7 @@ An existing page can keep its Flash markup:
 Add the bundle:
 
 ```html
-<script src="node_modules/retroflash.js/dist/retroflash-1.1.0.min.js"></script>
+<script src="node_modules/retroflash.js/dist/retroflash-1.1.1.min.js"></script>
 ```
 
 Install the stable release from npm with `npm install retroflash.js`.
@@ -70,15 +70,15 @@ The code lives in [`src/`](./src/) as classic scripts with no dependencies:
 | `src/swf-reader.js` | Parser (`SWFReader`, v0.6.0): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, filter lists, clip actions, and exports, and `inflate` |
 | `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/avm2/`, `src/audio/`, `src/input/`, `src/render/`, `src/browser/` | Player modules, including automatic playback of legacy Flash markup |
 | `src/interop/` | The Flash plugin's page scripting methods and its ExternalInterface XML |
-| `src/retroflash.js` | Player API (`RetroFlash`, v1.1.0) |
+| `src/retroflash.js` | Player API (`RetroFlash`, v1.1.1) |
 | `src/modules.json` | The load order of every script above |
 
-For use, build the single file `dist/retroflash-1.1.0.min.js`, which holds the reader and the player (see [Build](#build)):
+For use, build the single file `dist/retroflash-1.1.1.min.js`, which holds the reader and the player (see [Build](#build)):
 
 ```html
 <canvas id="stage"></canvas>
 <input id="file" type="file" accept=".swf">
-<script src="dist/retroflash-1.1.0.min.js"></script>
+<script src="dist/retroflash-1.1.1.min.js"></script>
 <script>
   var player = new RetroFlash.Player({ canvas: document.getElementById('stage') });
   document.getElementById('file').addEventListener('change', function (event) {
@@ -135,7 +135,7 @@ See [`LIMITATIONS.md`](./LIMITATIONS.md) for current compatibility gaps.
 
 ## Compatibility
 
-The 1.1.0 browser bundle is built to run on Google Chrome 38 and later. SWF feature support depends on the coverage described in [`LIMITATIONS.md`](./LIMITATIONS.md).
+The 1.1.1 browser bundle is built to run on Google Chrome 38 and later. SWF feature support depends on the coverage described in [`LIMITATIONS.md`](./LIMITATIONS.md).
 
 ## Requirements
 

@@ -2,7 +2,7 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
-## Unreleased
+## 1.1.1 — 2026-11-03
 
 - JavaScript ↔ ActionScript page scripting, as with the Flash Player plugin, for unchanged SWF files and pages. The full matrix, security model and limits are in [docs/interop/STATUS.md](./docs/interop/STATUS.md).
   - The canvas that replaces an `<object>`/`<embed>` gets the plugin's methods: `SetVariable`, `GetVariable` (and `$version`), `Play`, `StopPlay`, `IsPlaying`, `Rewind`, `Back`, `Forward`, `GotoFrame`, `CurrentFrame`, `TotalFrames`, `FrameLoaded`, `PercentLoaded`, `FlashVersion`, the `T*` target methods, `LoadMovie`, `Zoom`, `Pan`, `SetZoomRect`, `CallFunction` and `SetReturnValue`. It also takes the names of both an `<object>` and its inner `<embed>` in `document`. `RetroFlash.attachLegacyInterface(element, player)` and `RetroFlash.createPluginAPI(player)` do the same for players created by hand; destroying the player removes everything they added.

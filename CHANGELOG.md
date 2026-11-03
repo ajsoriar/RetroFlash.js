@@ -2,6 +2,10 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
+## 1.1.2 — 2026-11-03
+
+- Legacy `<object>`/`<embed>` markup logs the page's calls to the movie's ExternalInterface callbacks (`[RetroFlash.js] ExternalInterface callback <name>`), with `missing`, `refused` or `failed` when the call did not run, as it already logged the movie's calls to the page.
+
 ## 1.1.1 — 2026-11-03
 
 - JavaScript ↔ ActionScript page scripting, as with the Flash Player plugin, for unchanged SWF files and pages. The full matrix, security model and limits are in [docs/interop/STATUS.md](./docs/interop/STATUS.md).

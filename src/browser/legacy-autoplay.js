@@ -130,6 +130,11 @@
     player.on('navigate', function (r) { log('getURL ' + r.url + (r.target ? ' → ' + r.target : '') + (r.method ? ' (' + r.method + ')' : '')); });
     player.on('call', function (r) { log((r.kind === 'javascript' ? 'javascript: ' : 'ExternalInterface.call ') + (r.name || r.source)); });
     player.on('fscommand', function (r) { log('FSCommand ' + r.command + (r.args ? ' ' + r.args : '')); });
+    // The page calling the movie: an ExternalInterface.addCallback function, directly or through CallFunction.
+    player.on('interaction', function (r) {
+      if (r.direction !== 'incoming') return;
+      log('ExternalInterface callback ' + r.name + (r.status === 'called' ? '' : ' (' + r.status + ')'));
+    });
   }
 
   function mount(element) {

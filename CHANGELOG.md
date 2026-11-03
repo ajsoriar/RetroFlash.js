@@ -2,6 +2,19 @@
 
 Notable changes by release. See [known limitations](./LIMITATIONS.md) for current compatibility gaps.
 
+## 1.1.1 — 2026-11-03
+
+- JavaScript ↔ ActionScript page scripting, as with the Flash Player plugin, for unchanged SWF files and pages. The full matrix, security model and limits are in [docs/interop/STATUS.md](./docs/interop/STATUS.md).
+  - The canvas that replaces an `<object>`/`<embed>` gets the plugin's methods: `SetVariable`, `GetVariable` (and `$version`), `Play`, `StopPlay`, `IsPlaying`, `Rewind`, `Back`, `Forward`, `GotoFrame`, `CurrentFrame`, `TotalFrames`, `FrameLoaded`, `PercentLoaded`, `FlashVersion`, the `T*` target methods, `LoadMovie`, `Zoom`, `Pan`, `SetZoomRect`, `CallFunction` and `SetReturnValue`. It also takes the names of both an `<object>` and its inner `<embed>` in `document`. `RetroFlash.attachLegacyInterface(element, player)` and `RetroFlash.createPluginAPI(player)` do the same for players created by hand; destroying the player removes everything they added.
+  - ActionScript 3: `ExternalInterface.addCallback`, `marshallExceptions`, plain objects both ways, `flash.system.fscommand`, `Security.allowDomain` (accepted, grants nothing) and `loaderInfo.parameters` (FlashVars).
+  - ActionScript 2: `ExternalInterface` has only its documented members; `objectID` and `marshallExceptions` (ActionScript 3 members) now read as `undefined`.
+  - The plugin's ExternalInterface XML (`<invoke>`, `<string>`, `<array>`, …) is read by a bounded parser of the player's own (`RetroFlash.flashXML`).
+  - FSCommand: `player.addFSCommandHandler()` and the `onFSCommand` option run before the page's `<id>_DoFSCommand`; `<id>_FSCommand` is called when `_DoFSCommand` is missing; FSCommand requests carry `projector` for projector commands, and the `projectorCommands` option acts on `allowscale`, `fullscreen` and `quit`. `exec` is reported and never runs anything.
+  - `createBrowserHost` options `trust`, `allowedFunctions`, `allowFSCommand`, `scriptUrls` (`known-calls`, `off`, `trusted-eval`) and `executeScript`, also read from `window.RetroFlashConfig` with `flashVars`, `flashVersion`, `projectorCommands` and `onFSCommand`.
+  - Calls between the page and the movie may nest up to the Player option `maxBridgeDepth` (32); page values are read without calling getters and are bounded in size and depth.
+  - Player: `runExternal()`, `setViewRect()`/`getViewRect()`, `getPluginAPI()`, the `destroy` event, and `load()` FlashVars as an array of pairs.
+- `demo/interop/` plays a Flash-era page that scripts its movie, unchanged.
+
 ## 1.1.0 — 2026-11-02
 
 - Legacy `<object>`/`<embed>` markup also plays on `file://` pages, where the browser lets the page read local files (TV and packaged app platforms such as webOS). The browser host reads `file:` URLs with `XMLHttpRequest`, accepts the status 0 of a local read, treats a local SWF on a local page as the same domain for `allowScriptAccess`, and reports a refused local read as `load:file`.

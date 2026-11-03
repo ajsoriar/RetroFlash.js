@@ -3,9 +3,13 @@
    browser host (RetroFlash.createBrowserHost) opens the pages the movie asks for, calls page functions for
    javascript: URLs and ExternalInterface, sends FSCommands to `<id>_DoFSCommand`, and loads what scripts load
    under the browser's CORS rules. The element's size (pixels or percent) and parameters are honoured:
-   movie/src/data, base, FlashVars, allowScriptAccess, allowNetworking, bgcolor, scale and salign. Optional page
-   settings: window.RetroFlashConfig (see the legacy object/embed markup API), including scaleMode, align and
-   pixelRatio, which override the markup's. The players are listed by RetroFlash.getInstances(). */
+   movie/src/data, base, FlashVars, allowScriptAccess, allowNetworking, bgcolor, scale and salign. The canvas
+   takes the element's id, its name in `document`, and the plugin's scripting methods (SetVariable, GotoFrame,
+   CallFunction, ... and the movie's ExternalInterface callbacks; interop/plugin-api.js), so the page's own
+   scripts keep working unchanged. Optional page settings: window.RetroFlashConfig (see the legacy object/embed
+   markup API), including scaleMode, align and pixelRatio, which override the markup's, and trust,
+   allowedFunctions, allowFSCommand, scriptUrls, executeScript (createBrowserHost), flashVars, flashVersion,
+   projectorCommands and onFSCommand (the Player). The players are listed by RetroFlash.getInstances(). */
 (function (global) {
   'use strict';
 
@@ -52,6 +56,13 @@
     return element.id || element.getAttribute('name') || (embeds.length && (embeds[0].id || embeds[0].getAttribute('name'))) || '';
   }
 
+  // Every name and id of the element and its inner <embed>, without repeats.
+  function namesOf(element) {
+    var names = [element.id, element.getAttribute('name')], embeds = element.getElementsByTagName('embed');
+    if (embeds.length) names.push(embeds[0].id, embeds[0].getAttribute('name'));
+    return names.filter(function (name, i) { return name && names.indexOf(name) === i; });
+  }
+
   function numericDimension(element, name, fallback) {
     var value = element.getAttribute(name);
     if (value && /^\d+(?:\.\d+)?$/.test(value)) return Math.max(1, Math.round(Number(value)));
@@ -85,11 +96,17 @@
     return swfUrl.origin === global.location.origin;
   }
 
-  // FlashVars, then the query string of the movie URL, as the plugin passed them to the root.
-  function flashVarsOf(element, swfUrl) {
+  /* FlashVars, as the plugin passed them to the root: the <param name="flashvars"> (or the <embed>'s attribute),
+     then the query string of the movie URL, then RetroFlashConfig.flashVars (a query string or an object); a
+     name given twice keeps its last value. */
+  function flashVarsOf(element, swfUrl, extra) {
     var vars = paramOf(element, 'flashvars');
     var query = swfUrl.search.replace(/^\?/, '');
-    return [vars, query].filter(Boolean).join('&');
+    var text = [vars, query].filter(Boolean).join('&');
+    if (!extra) return text;
+    var pairs = global.RetroFlash.internals.parseVariables(text);
+    if (typeof extra === 'string') return pairs.concat(global.RetroFlash.internals.parseVariables(extra.replace(/^\?/, '')));
+    return pairs.concat(Object.keys(extra).map(function (k) { return [k, String(extra[k])]; }));
   }
 
   function showError(canvas, error, source, report) {
@@ -107,19 +124,6 @@
     context.fillText('Could not load the SWF movie', canvas.width / 2, canvas.height / 2 - 8);
     context.font = '12px sans-serif';
     context.fillText(error.message.slice(0, 90), canvas.width / 2, canvas.height / 2 + 14);
-  }
-
-  /* Callbacks the movie registers with ExternalInterface.addCallback become methods of the canvas, as they were
-     methods of the plugin element: document.getElementById(id).name(args...). */
-  function exposeCallbacks(canvas, player) {
-    var exposed = [];
-    player.on('callbacks', function (names) {
-      exposed.forEach(function (name) { if (names.indexOf(name) < 0) delete canvas[name]; });
-      exposed = names.filter(function (name) { return !(name in canvas) || exposed.indexOf(name) >= 0; });
-      exposed.forEach(function (name) {
-        canvas[name] = function () { return player.callback(name, Array.prototype.slice.call(arguments)); };
-      });
-    });
   }
 
   function logInteractions(player) {
@@ -156,8 +160,12 @@
     if (element.id) canvas.id = element.id;
     if (element.className) canvas.className = element.className;
     element.parentNode.replaceChild(canvas, element);
-    // An <embed name> was reachable as document[name]; the canvas takes its place.
-    if (objectId && !element.id && !(objectId in global.document)) global.document[objectId] = canvas;
+    /* The names the page reached the plugin by: document[name] for a named <embed> or <object> (and an
+       <object id> with an <embed name> inside, one movie under two names). The canvas takes their place where
+       the document does not already use the name. */
+    namesOf(element).forEach(function (name) {
+      if (name && !(name in global.document)) global.document[name] = canvas;
+    });
 
     var playerReportedError = false;
     try {
@@ -173,15 +181,21 @@
         base: config.base || (base && base !== '.' ? new URL(base, location.href).href : base === '.' ? swfUrl.href : undefined),
         allowScriptAccess: config.allowScriptAccess !== undefined ? config.allowScriptAccess !== false : scriptAccessOf(paramOf(element, 'allowScriptAccess'), swfUrl),
         allowNetworking: config.allowNetworking || paramOf(element, 'allowNetworking') || 'all',
+        trust: config.trust, allowedFunctions: config.allowedFunctions, allowFSCommand: config.allowFSCommand,
+        scriptUrls: config.scriptUrls, executeScript: config.executeScript,
         rewriteUrl: config.rewriteUrl
       });
       var player = new global.RetroFlash.Player({
         canvas: canvas, autoplay: config.autoplay !== false, host: host, pixelRatio: config.pixelRatio,
         scaleMode: config.scaleMode || scaleModeOf(paramOf(element, 'scale')),
-        align: config.align !== undefined ? config.align : alignOf(paramOf(element, 'salign'))
+        align: config.align !== undefined ? config.align : alignOf(paramOf(element, 'salign')),
+        flashVersion: config.flashVersion, projectorCommands: config.projectorCommands, onFSCommand: config.onFSCommand
       });
       player.on('error', function () { playerReportedError = true; });
-      exposeCallbacks(canvas, player);
+      /* The plugin's scripting methods (SetVariable, GotoFrame, CallFunction, ...) and the movie's
+         ExternalInterface callbacks become methods of the canvas, as they were of the plugin element:
+         document.getElementById(id).name(args...). Destroying the player removes them. */
+      global.RetroFlash.attachLegacyInterface(canvas, player);
       logInteractions(player);
       canvas.retroflashPlayer = player;
       if (typeof global.CustomEvent === 'function') {
@@ -190,7 +204,7 @@
       var name = swfUrl.pathname.split('/').pop();
       log('Loading "' + name + '".');
       host.load({ url: swfUrl.href, type: 'movie', method: null }).then(function (bytes) {
-        return player.load(bytes, { url: swfUrl.href, variables: flashVarsOf(element, swfUrl) });
+        return player.load(bytes, { url: swfUrl.href, variables: flashVarsOf(element, swfUrl, config.flashVars) });
       }).then(function (info) {
         if (info) log('Loaded "' + name + '": SWF ' + info.version + ', ' +
           info.width + 'x' + info.height + ', ' + info.fps + ' fps, ' + info.frameCount + ' frames.');

@@ -92,12 +92,33 @@
     });
   }
 
+  var SCRIPT_URL_MODES = { off: 1, 'known-calls': 1, 'trusted-eval': 1 };
+  function optionError(message) {
+    var err = new Error('RetroFlash: ' + message);
+    err.name = 'RetroFlashError';
+    err.code = 'INVALID_OPTION';
+    return err;
+  }
+
   /* options:
      - base: the URL relative URLs resolve against (default: the page's base URL);
      - objectID: the embedding element's id or name (ExternalInterface.objectID, `<objectID>_DoFSCommand`);
      - allowScriptAccess: false refuses javascript: URLs, ExternalInterface, FSCommand and navigating the page
        itself (`_self`, `_parent`, `_top`), as the `allowScriptAccess` parameter did (default true);
      - allowNetworking: 'all' (default); 'internal' also refuses opening pages; 'none' refuses loads as well;
+     - trust: 'trusted' (default: a movie the page's owner chose) or 'untrusted' (a third-party movie): an
+       untrusted movie may call only `allowedFunctions`, send FSCommands only with `allowFSCommand`, never
+       replaces the page itself, and runs javascript: URLs only as calls of allowed functions;
+     - allowedFunctions: the page functions the movie may call ('a', 'a.b.f'), as an array or a function
+       (name, request) -> boolean; others are refused (BLOCKED). Default: any function of the page (trusted),
+       none (untrusted);
+     - allowFSCommand: whether an untrusted movie may send FSCommands (default false);
+     - scriptUrls: how javascript: URLs are handled: 'known-calls' (default: calls of page functions by name
+       with literal arguments, never evaluated), 'off' (refused) or 'trusted-eval' (anything else is passed, as
+       text, to `executeScript`);
+     - executeScript(source, request): with scriptUrls 'trusted-eval', runs a javascript: URL that is not a
+       plain call (`source` is the whole URL). It runs arbitrary page JavaScript the movie wrote: give it only for
+       movies you trust. The player never evaluates anything itself;
      - rewriteUrl(url, request): returns the URL to use instead of `url` (already resolved), for example a local
        copy of a remote resource; anything else keeps it;
      - maxFileBytes: largest response read (default 50 MiB);
@@ -109,6 +130,22 @@
     var networking = String(options.allowNetworking || 'all').toLowerCase();
     var maxFileBytes = options.maxFileBytes || MAX_FILE_BYTES;
     var rewrite = typeof options.rewriteUrl === 'function' ? options.rewriteUrl : null;
+    var trust = String(options.trust || 'trusted').toLowerCase();
+    if (trust !== 'trusted' && trust !== 'untrusted') throw optionError('trust must be "trusted" or "untrusted"');
+    var untrusted = trust === 'untrusted';
+    var scriptUrls = String(options.scriptUrls || 'known-calls').toLowerCase();
+    if (!SCRIPT_URL_MODES[scriptUrls]) throw optionError('scriptUrls must be "off", "known-calls" or "trusted-eval"');
+    var executeScript = typeof options.executeScript === 'function' ? options.executeScript : null;
+    if (scriptUrls === 'trusted-eval' && !executeScript) throw optionError('scriptUrls "trusted-eval" needs an executeScript(source, request) function');
+    if (scriptUrls === 'trusted-eval' && untrusted) throw optionError('scriptUrls "trusted-eval" cannot be used with an untrusted movie');
+    var allowed = options.allowedFunctions;
+    if (allowed !== undefined && allowed !== null && !Array.isArray(allowed) && typeof allowed !== 'function') throw optionError('allowedFunctions must be an array of names or a function');
+    if ((allowed === undefined || allowed === null) && untrusted) allowed = [];
+    var allowFSCommand = !untrusted || options.allowFSCommand === true;
+    function isAllowed(name, request) {
+      if (allowed === undefined || allowed === null) return true;
+      return typeof allowed === 'function' ? allowed(name, request) === true : allowed.indexOf(name) >= 0;
+    }
     function base() {
       return options.base || (win.document && win.document.baseURI) || (win.location && win.location.href) || undefined;
     }
@@ -159,21 +196,34 @@
       objectID: options.objectID ? String(options.objectID) : null,
       allowScriptAccess: scriptAccess,
       allowNetworking: networking,
+      trust: trust,
+      scriptUrls: scriptUrls,
       resolve: function (url) { return resolve(url, null).href; },
 
       navigate: function (request) {
         if (networking !== 'all') throw hostError('BLOCKED', 'allowNetworking="' + networking + '" does not let the movie open pages.');
         var target = String(request.target || ''), url = resolve(request.url, request);
         if (url.protocol === 'javascript:') throw hostError('BLOCKED', 'javascript: URLs are calls, not pages to open.');
-        if (!scriptAccess && CURRENT_PAGE[target.toLowerCase()]) throw hostError('BLOCKED', 'allowScriptAccess does not let the movie replace this page.');
+        if ((!scriptAccess || untrusted) && CURRENT_PAGE[target.toLowerCase()]) throw hostError('BLOCKED', (untrusted ? 'An untrusted movie' : 'allowScriptAccess') + ' does not let the movie replace this page.');
         if (request.method === 'POST') return submitForm(url, target, request.variables || []);
         if (!target || target.toLowerCase() === '_self') win.location.assign(url.href);
         else if (win.open(url.href, target) === null) throw hostError('BLOCKED', 'The browser refused to open ' + url.href + ' in "' + target + '".');
       },
 
+      /* A page call: ExternalInterface.call (kind 'external') or a javascript: URL (kind 'javascript'), as a
+         function name and arguments, or, for a javascript: URL that is not plain calls, no name and its text. */
       call: function (request) {
         requireScriptAccess('call the page');
-        if (!request.name) throw hostError('UNSUPPORTED', 'Only calls of page functions with literal arguments are run from javascript: URLs; this one was not run.');
+        if (request.kind === 'javascript' && scriptUrls === 'off') throw hostError('BLOCKED', 'javascript: URLs are turned off for this movie (scriptUrls "off").');
+        if (!request.name) {
+          if (scriptUrls !== 'trusted-eval') throw hostError('UNSUPPORTED', 'Only calls of page functions with literal arguments are run from javascript: URLs; this one was not run (scriptUrls "trusted-eval" with an executeScript function runs others).');
+          try {
+            return executeScript(String(request.source), request);
+          } catch (err) {
+            throw hostError('CALL_FAILED', 'executeScript failed: ' + (err && err.message ? err.message : String(err)));
+          }
+        }
+        if (!isAllowed(String(request.name), request)) throw hostError('BLOCKED', request.name + ' is not one of the page functions this movie may call (allowedFunctions).');
         var parts = String(request.name).split('.'), owner = null, fn = win, args = request.args || [];
         for (var i = 0; i < parts.length; i++) {
           if (!/^[A-Za-z_$][\w$]*$/.test(parts[i]) || FORBIDDEN_NAMES[parts[i]]) throw hostError('BLOCKED', request.name + ' is not a function name the movie may call.');
@@ -190,12 +240,20 @@
         }
       },
 
+      /* An FSCommand: the page's `<objectID>_DoFSCommand(command, args)` (the JavaScript handler of the plugin
+         era), else `<objectID>_FSCommand(command, args)` (the name of the Internet Explorer event a VBScript
+         `Sub` handled), as a global function of the window. Names are matched exactly. */
       fscommand: function (request) {
         requireScriptAccess('send FSCommands');
-        var name = (host.objectID || '') + '_DoFSCommand', handler = host.objectID ? win[name] : null;
-        if (typeof handler !== 'function') throw hostError('FUNCTION_MISSING', 'The page has no ' + (host.objectID ? name : '<objectID>_DoFSCommand') + ' function for FSCommand "' + request.command + '".');
+        if (!allowFSCommand) throw hostError('BLOCKED', 'An untrusted movie may not send FSCommands to the page (allowFSCommand).');
+        var id = host.objectID, name = (id || '') + '_DoFSCommand', handler = id ? win[name] : null;
+        if (typeof handler !== 'function' && id && typeof win[id + '_FSCommand'] === 'function') {
+          name = id + '_FSCommand';
+          handler = win[name];
+        }
+        if (typeof handler !== 'function') throw hostError('FUNCTION_MISSING', 'The page has no ' + (id ? name : '<objectID>_DoFSCommand') + ' function for FSCommand "' + request.command + '".');
         try {
-          handler.call(win, request.command, request.args);
+          handler.call(win, String(request.command), String(request.args === undefined || request.args === null ? '' : request.args));
         } catch (err) {
           throw hostError('CALL_FAILED', name + ' failed: ' + (err && err.message ? err.message : String(err)));
         }

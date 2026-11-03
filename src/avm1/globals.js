@@ -670,12 +670,13 @@
     hide(G, 'flash', FlashPackage);
     hide(FlashPackage, 'external', External);
     FLASH_PACKAGES.forEach(function (name) { hide(FlashPackage, name, UNKNOWN_VALUE); });
+    /* The ActionScript 2 class (Flash Player 8) has `available`, call and addCallback only: objectID and
+       marshallExceptions came with ActionScript 3 and read as undefined here. */
     hide(External, 'ExternalInterface', ExternalInterface);
     hide(ExternalInterface, 'available', bridge.available);
-    hide(ExternalInterface, 'objectID', bridge.objectID);
-    hide(ExternalInterface, 'marshallExceptions', false);
     methods(ExternalInterface, {
-      // call(name, args...): the page function's result, or null when the call could not be made.
+      /* call(name, args...): the page function's result, in the same call stack; null when the call could not
+         be made (no host, no such function, the page threw, or too many nested calls). */
       call: function (rt, self, args) {
         if (!bridge.available || !args.length) return null;
         var result = bridge.call({
@@ -684,11 +685,13 @@
         });
         return result ? M.fromHostValue(rt, result.value) : null;
       },
-      // addCallback(name, instance, method): the page can call method with instance as `this` (Player.callback).
+      /* addCallback(name, instance, method): the page can call method with instance as `this` (Player.callback,
+         or the element's method of that name). A second registration of a name replaces the first. False
+         without a bridge, a name or a function. */
       addCallback: function (rt, self, args) {
         var name = str(arg(args, 0)), method = arg(args, 2);
         if (!bridge.available || !name || !isFunction(method)) return false;
-        bridge.addCallback(name, arg(args, 1), method);
+        bridge.addCallback(name, arg(args, 1), method, 'avm1');
         return true;
       }
     });

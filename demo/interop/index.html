@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RetroFlash.js - Legacy page scripting</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif}body{max-width:980px;margin:35px auto;padding:0 18px;background:#111827;color:#e5e7eb}
+p{color:#9ca3af}code{color:#e5e7eb}a{color:#67e8f9}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+button{padding:7px 12px;border:1px solid #4b5563;border-radius:8px;background:#1f2937;color:#e5e7eb;cursor:pointer;font:inherit}button:hover{border-color:#67e8f9}
+#log{max-height:280px;overflow:auto;font:12px ui-monospace,monospace;background:#0b1220;border:1px solid #374151;border-radius:8px;padding:10px;margin:0;list-style:none}
+#log li{padding:2px 0;overflow-wrap:anywhere}
+</style>
+<script>
+/* The page's own scripts, as a Flash-era page wrote them: global functions the movie calls with
+   ExternalInterface.call, getURL("javascript:...") and fscommand(), and calls of the plugin's methods on the
+   movie element. Nothing here knows about RetroFlash.js. */
+function log(text) {
+  var item = document.createElement('li');
+  item.textContent = text;
+  var list = document.getElementById('log');
+  if (list) list.insertBefore(item, list.firstChild);
+}
+var test = { add: function (a, b) { log('ExternalInterface.call("test.add", ' + a + ', ' + b + ') -> ' + (a + b)); return a + b; } };
+function echo(value) { log('ExternalInterface.call("echo", ' + JSON.stringify(value) + ')'); return value; }
+function viaReturn() {
+  // The plugin-era way to answer a call from the movie: SetReturnValue with the XML of the value.
+  document.getElementById('legacyMovie').SetReturnValue('<number>99</number>');
+  return 1;
+}
+function deeper(n) { return 'page answered ' + n; }
+function onReady(n) { log('getURL("javascript:onReady(' + n + ')") -> onReady(' + n + ') [' + typeof n + ']'); }
+function legacyMovie_DoFSCommand(command, args) { log('legacyMovie_DoFSCommand("' + command + '", "' + args + '")'); }
+
+function movie() { return document.getElementById('legacyMovie'); }
+function show(label, value) { log(label + ' -> ' + (typeof value === 'string' ? '"' + value + '"' : String(value))); }
+</script>
+</head>
+<body>
+<h1>Legacy page scripting</h1>
+<p>An unchanged Flash-era page: an <code>&lt;object&gt;</code> with a nested <code>&lt;embed&gt;</code>, FlashVars, a
+<code>legacyMovie_DoFSCommand</code> handler, page functions for <code>ExternalInterface.call</code>, and buttons that
+script the movie with the plugin's methods (<code>SetVariable</code>, <code>GotoFrame</code>, <code>TGotoLabel</code>, …)
+and its <code>ExternalInterface.addCallback</code> functions. The only change is the script tags at the end of the page, which
+load RetroFlash.js. The movie is <code>interop.swf</code>, built by <code>node tests/fixtures/interop.js</code>
+(ActionScript 2). Serve this folder over HTTP: <code>npx http-server .</code> from the project root, then open
+<code>/demo/interop/</code>.</p>
+
+<object id="legacyMovie" classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000" width="550" height="400">
+  <param name="movie" value="interop.swf">
+  <param name="flashvars" value="level=3&amp;name=Guest">
+  <param name="allowScriptAccess" value="sameDomain">
+  <embed name="legacyMovie" src="interop.swf" type="application/x-shockwave-flash" width="550" height="400"
+         flashvars="level=3&amp;name=Guest" allowScriptAccess="sameDomain">
+</object>
+
+<div class="controls">
+  <button onclick="show('GetVariable(&quot;/:level&quot;)', movie().GetVariable('/:level'))">GetVariable /:level</button>
+  <button onclick="movie().SetVariable('_root.message', 'Hello'); show('GetVariable(&quot;_root.message&quot;)', movie().GetVariable('_root.message'))">SetVariable _root.message</button>
+  <button onclick="show('GetVariable(&quot;sum&quot;)', movie().GetVariable('sum'))">GetVariable sum</button>
+  <button onclick="movie().GotoFrame(1); show('GotoFrame(1); CurrentFrame()', movie().CurrentFrame())">GotoFrame(1)</button>
+  <button onclick="movie().Rewind(); show('Rewind(); CurrentFrame()', movie().CurrentFrame())">Rewind</button>
+  <button onclick="movie().TGotoLabel('/menu', 'open'); show('TGotoLabel(&quot;/menu&quot;, &quot;open&quot;); TCurrentLabel', movie().TCurrentLabel('/menu'))">TGotoLabel /menu open</button>
+  <button onclick="movie().TSetPropertyNum('/menu', 0, Number(movie().TGetProperty('/menu', 0)) + 20); show('TGetProperty(&quot;/menu&quot;, 0)', movie().TGetProperty('/menu', 0))">Move /menu (_x + 20)</button>
+  <button onclick="movie().Zoom(50); log('Zoom(50)')">Zoom(50)</button>
+  <button onclick="movie().Pan(10, 0, 1); log('Pan(10, 0, 1)')">Pan right</button>
+  <button onclick="movie().Zoom(0); log('Zoom(0)')">Zoom(0)</button>
+  <button onclick="show('movie.setMessage(&quot;Hello&quot;)', movie().setMessage('Hello'))">setMessage callback</button>
+  <button onclick="show('CallFunction(&lt;invoke name=&quot;setMessage&quot;&gt;)', movie().CallFunction('<invoke name=&quot;setMessage&quot; returntype=&quot;xml&quot;><arguments><string>XML</string></arguments></invoke>'))">CallFunction</button>
+  <button onclick="show('movie.nest(1)', movie().nest(1))">nest(1): page → movie → page</button>
+  <button onclick="show('FlashVersion() / $version', movie().FlashVersion() + ' / ' + movie().GetVariable('$version'))">FlashVersion</button>
+</div>
+<ul id="log"></ul>
+
+<!-- RetroFlash.js. A published page loads the single bundle (npm run build) instead:
+     <script src="../../dist/retroflash-<version>.min.js"></script> -->
+<script src="../../src/swf-reader.js"></script>
+<script src="../../src/core/base.js"></script>
+<script src="../../src/core/math.js"></script>
+<script src="../../src/render/geometry.js"></script>
+<script src="../../src/render/morph.js"></script>
+<script src="../../src/display/bitmaps.js"></script>
+<script src="../../src/text/fonts.js"></script>
+<script src="../../src/text/html.js"></script>
+<script src="../../src/text/layout.js"></script>
+<script src="../../src/avm1/decoder.js"></script>
+<script src="../../src/avm1/values.js"></script>
+<script src="../../src/avm1/properties.js"></script>
+<script src="../../src/avm1/objects.js"></script>
+<script src="../../src/avm1/variables.js"></script>
+<script src="../../src/avm1/external.js"></script>
+<script src="../../src/avm1/globals.js"></script>
+<script src="../../src/avm1/interpreter.js"></script>
+<script src="../../src/avm2/abc.js"></script>
+<script src="../../src/avm2/runtime.js"></script>
+<script src="../../src/avm2/api.js"></script>
+<script src="../../src/audio/codecs.js"></script>
+<script src="../../src/audio/mixer.js"></script>
+<script src="../../src/display/movie.js"></script>
+<script src="../../src/display/clip.js"></script>
+<script src="../../src/display/loader.js"></script>
+<script src="../../src/display/button.js"></script>
+<script src="../../src/input/hit-test.js"></script>
+<script src="../../src/input/input.js"></script>
+<script src="../../src/render/canvas-renderer.js"></script>
+<script src="../../src/browser/host.js"></script>
+<script src="../../src/browser/web-audio.js"></script>
+<script src="../../src/interop/flash-xml.js"></script>
+<script src="../../src/interop/plugin-api.js"></script>
+<script src="../../src/retroflash.js"></script>
+<script src="../../src/browser/legacy-autoplay.js"></script>
+</body>
+</html>

@@ -154,7 +154,7 @@ test('timelines: removal, rewind keeps matching instances, root loop reports the
 
 test('Player requires a canvas', () => {
   assert.throws(() => new RetroFlash.Player({}), (err) => err.name === 'RetroFlashError' && err.code === 'INVALID_OPTION');
-  assert.strictEqual(RetroFlash.version, '1.1.0');
+  assert.strictEqual(RetroFlash.version, '1.1.1');
 });
 
 // ---- Layout: scale modes and alignment; the players of the page ----

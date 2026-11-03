@@ -22,6 +22,8 @@
   "render/canvas-renderer.js",
   "browser/host.js",
   "browser/web-audio.js",
+  "interop/flash-xml.js",
+  "interop/plugin-api.js",
   "retroflash.js",
   "browser/legacy-autoplay.js"
 ]

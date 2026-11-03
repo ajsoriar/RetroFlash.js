@@ -13,6 +13,10 @@
 
   var METHODS = [null, 'GET', 'POST'];
   var MAX_HOST_DEPTH = 64;       // nesting of objects and arrays passed to or from the page; deeper values are null
+  var MAX_HOST_VALUES = 100000;  // objects and arrays in one value passed to or from the page; later ones are null
+  var MAX_BRIDGE_DEPTH = 32;     // nested calls across the page boundary (movie -> page -> movie -> ...)
+  // FSCommands a standalone projector acted on; in a browser they reach the page like any other command.
+  var PROJECTOR_COMMANDS = { quit: 1, fullscreen: 1, allowscale: 1, showmenu: 1, exec: 1, trapallkeys: 1 };
   var MAX_SCRIPT_LENGTH = 4096;  // javascript: URLs longer than this are not read as calls
 
   function isScriptURL(url) { return /^\s*javascript:/i.test(url); }
@@ -173,37 +177,47 @@
   // ---- Values passed to and from the page (ExternalInterface) ----
 
   /* An AVM1 value as a JavaScript value for the page: primitives as they are, arrays as arrays, objects and
-     movie clips as plain objects of their enumerable members; functions and cycles are null. */
-  function toHostValue(rt, value, depth, seen) {
+     movie clips as plain objects of their enumerable members; functions and cycles are null. A conversion
+     holds at most MAX_HOST_VALUES values; the ones past it are null. */
+  function toHostValue(rt, value) { return toHost(rt, value, { depth: 0, seen: [], values: 0 }); }
+  function toHost(rt, value, state) {
     if (value === UNKNOWN_VALUE) return undefined;
     if (value === null || typeof value !== 'object') return value;
     if (isObject(value) && 'primitive' in value) return value.primitive;
     if (isFunction(value)) return null;
-    depth = depth || 0;
-    seen = seen || [];
-    if (depth >= MAX_HOST_DEPTH || seen.indexOf(value) >= 0 || !(isObject(value) || isClip(value))) return null;
-    seen.push(value);
+    if (state.depth >= MAX_HOST_DEPTH || ++state.values > MAX_HOST_VALUES || state.seen.indexOf(value) >= 0 || !(isObject(value) || isClip(value))) return null;
+    state.seen.push(value);
+    state.depth++;
     try {
       if (value instanceof AvmArray) {
         var list = new Array(value.items.length);
-        for (var i = 0; i < value.items.length; i++) list[i] = toHostValue(rt, value.items[i], depth + 1, seen);
+        for (var i = 0; i < value.items.length; i++) list[i] = toHost(rt, value.items[i], state);
         return list;
       }
       var out = {};
       keysOf(rt, value).forEach(function (name) {
         Object.defineProperty(out, name, {
-          value: toHostValue(rt, getMember(rt, value, name), depth + 1, seen), enumerable: true, writable: true, configurable: true
+          value: toHost(rt, getMember(rt, value, name), state), enumerable: true, writable: true, configurable: true
         });
       });
       return out;
     } finally {
-      seen.pop();
+      state.depth--;
+      state.seen.pop();
     }
   }
   /* A JavaScript value from the page as an AVM1 value: primitives as they are (a BigInt as a number), arrays as
-     arrays, other objects as objects of their own enumerable properties; functions and symbols are undefined,
-     cycles and properties that cannot be read are null. */
-  function fromHostValue(rt, value, depth, seen) {
+     arrays (holes are undefined), a Date as its time in milliseconds (the player has no AVM1 Date), other
+     objects as objects of their own enumerable data properties: getters are never called, so a page object
+     cannot run code while it is read. Functions and symbols are undefined; cycles, values past the depth or
+     MAX_HOST_VALUES, and arrays longer than MAX_ARRAY_INDEX items (cut there) give null for what is left. */
+  function fromHostValue(rt, value) { return fromHost(rt, value, { depth: 0, seen: [], values: 0 }); }
+  function ownDataValue(obj, name) {
+    var d;
+    try { d = Object.getOwnPropertyDescriptor(obj, name); } catch (err) { return null; }
+    return d && 'value' in d ? d.value : null;
+  }
+  function fromHost(rt, value, state) {
     switch (typeof value) {
       case 'undefined': case 'boolean': case 'number': case 'string': return value;
       case 'bigint': return Number(value);
@@ -211,25 +225,26 @@
       default: return undefined;
     }
     if (value === null) return null;
-    depth = depth || 0;
-    seen = seen || [];
-    if (depth >= MAX_HOST_DEPTH || seen.indexOf(value) >= 0) return null;
-    seen.push(value);
+    if (value instanceof Date) return value.getTime();
+    if (state.depth >= MAX_HOST_DEPTH || ++state.values > MAX_HOST_VALUES || state.seen.indexOf(value) >= 0) return null;
+    state.seen.push(value);
+    state.depth++;
     try {
       if (Array.isArray(value)) {
-        return rt.array(value.slice(0, MAX_ARRAY_INDEX).map(function (item) { return fromHostValue(rt, item, depth + 1, seen); }));
+        var n = Math.min(value.length, MAX_ARRAY_INDEX), items = new Array(n);
+        for (var i = 0; i < n; i++) items[i] = i in value ? fromHost(rt, ownDataValue(value, i), state) : undefined;
+        return rt.array(items);
       }
       var obj = new AvmObject(rt.protos.Object);
       Object.keys(value).forEach(function (name) {
-        var item;
-        try { item = value[name]; } catch (err) { item = null; }
-        setMember(rt, obj, name, fromHostValue(rt, item, depth + 1, seen));
+        setMember(rt, obj, name, fromHost(rt, ownDataValue(value, name), state));
       });
       return obj;
     } catch (err) {
       return null;
     } finally {
-      seen.pop();
+      state.depth--;
+      state.seen.pop();
     }
   }
 
@@ -264,12 +279,52 @@
     this.interaction = typeof interaction === 'function' ? interaction : null;
     this.available = !!this.host;
     this.objectID = this.host && typeof this.host.objectID === 'string' && this.host.objectID ? this.host.objectID : null;
-    this.callbacks = new Map(); // name -> { fn, thisValue }
+    this.callbacks = new Map(); // name -> { fn, thisValue, vm: 'avm1' | 'avm2' }
     this.onCallbacks = null;
+    // Calls across the boundary in progress, both ways (enter/leave); deeper ones are refused.
+    this.depth = 0;
+    this.maxDepth = MAX_BRIDGE_DEPTH;
+    // { code, message } of the last request the host failed or refused, for ExternalInterface.marshallExceptions.
+    this.lastError = null;
+    // One entry per page call in progress: what the page gave SetReturnValue during it ({ value }), or null.
+    this.returns = [];
   }
+  /* A call crossing the boundary starts (true) or is refused because MAX_BRIDGE_DEPTH calls are already in
+     progress (false, reported). Every true is followed by leave(). */
+  HostBridge.prototype.enter = function (detail) {
+    if (this.depth >= this.maxDepth) {
+      this.report('browser:callDepth', 'More than ' + this.maxDepth + ' nested calls between the movie and the page; the call was refused.', detail);
+      return false;
+    }
+    this.depth++;
+    return true;
+  };
+  HostBridge.prototype.leave = function () { if (this.depth > 0) this.depth--; };
+  /* SetReturnValue (the plugin's method): while the movie is calling the page, the value the page gives here
+     is the call's result, whatever its function returns. False when no call is in progress. */
+  HostBridge.prototype.setReturnValue = function (value) {
+    if (!this.returns.length) return false;
+    this.returns[this.returns.length - 1] = { value: value };
+    return true;
+  };
   // Hands a request to the listeners, then to host[method]. Returns { value } when the host (or a listener)
   // handled it, or null.
   HostBridge.prototype.send = function (type, method, request, detail, noHost) {
+    this.lastError = null;
+    if (!this.enter(detail)) {
+      this.lastError = { code: 'CALL_DEPTH', message: 'Too many nested calls between the movie and the page.' };
+      return null;
+    }
+    this.returns.push(null);
+    try {
+      var result = this.sendNow(type, method, request, detail, noHost), given = this.returns[this.returns.length - 1];
+      return given && result ? { value: given.value } : result;
+    } finally {
+      this.returns.pop();
+      this.leave();
+    }
+  };
+  HostBridge.prototype.sendNow = function (type, method, request, detail, noHost) {
     var interaction = { direction: 'outgoing', channel: type, status: 'requested' };
     if (type === 'navigate') {
       interaction.url = String(request.url || '').split(/[?#]/)[0];
@@ -294,6 +349,7 @@
       interaction.status = 'no-host';
       if (this.interaction) this.interaction(interaction);
       this.report('browser:noHost', noHost, detail);
+      this.lastError = { code: 'NO_HOST', message: 'The host page handles no ' + type + ' requests.' };
       return null;
     }
     try {
@@ -307,6 +363,7 @@
       interaction.errorCode = code || 'CALL_FAILED';
       if (this.interaction) this.interaction(interaction);
       this.report(HOST_ERRORS[code] || 'browser:callFailed', message, detail);
+      this.lastError = { code: code || 'CALL_FAILED', message: message };
       return null;
     }
   };
@@ -328,14 +385,29 @@
     if (!calls) return this.call({ kind: 'javascript', name: null, args: [], source: url });
     calls.forEach(function (c) { self.call({ kind: 'javascript', name: c.name, args: c.args, source: url }); });
   };
+  /* fscommand(command, args) from either VM, or an "FSCommand:" URL: both are strings ('' when missing).
+     `projector` marks the commands a standalone projector acted on (quit, fullscreen, allowscale, showmenu,
+     exec, trapallkeys): the player never runs anything for `exec`, it only passes the request on. */
   HostBridge.prototype.fscommand = function (command, args) {
-    var r = hostRequest({ command: command, args: args });
+    command = command === undefined || command === null ? '' : String(command);
+    args = args === undefined || args === null ? '' : String(args);
+    var projector = PROJECTOR_COMMANDS.hasOwnProperty(command.toLowerCase());
+    if (projector && command.toLowerCase() === 'exec') {
+      this.report('browser:fscommandExec', 'The movie asks to run a program (FSCommand "exec"); the player never runs programs. The request only reaches the page.', args);
+    }
+    var r = hostRequest({ command: command, args: args, projector: projector });
     this.send('fscommand', 'fscommand', r, command + (args ? ' ' + args : ''),
       'The movie sends an FSCommand, but the host page handles none (the Player option `host`); ignored.');
   };
-  HostBridge.prototype.addCallback = function (name, thisValue, fn) {
-    this.callbacks.set(name, { fn: fn, thisValue: thisValue });
+  // `vm` is the virtual machine `fn` belongs to: 'avm1' (thisValue is its `this`) or 'avm2' (a closure).
+  HostBridge.prototype.addCallback = function (name, thisValue, fn, vm) {
+    this.callbacks.set(name, { fn: fn, thisValue: thisValue, vm: vm || 'avm1' });
     if (this.interaction) this.interaction({ direction: 'outgoing', channel: 'ExternalInterface.addCallback', status: 'registered', name: name });
+    if (this.onCallbacks) this.onCallbacks(Array.from(this.callbacks.keys()));
+  };
+  HostBridge.prototype.removeCallback = function (name) {
+    if (!this.callbacks.delete(name)) return;
+    if (this.interaction) this.interaction({ direction: 'outgoing', channel: 'ExternalInterface.addCallback', status: 'removed', name: name });
     if (this.onCallbacks) this.onCallbacks(Array.from(this.callbacks.keys()));
   };
   // The bridge of a scheduler; one without a host when the scheduler has none (tests, tools).

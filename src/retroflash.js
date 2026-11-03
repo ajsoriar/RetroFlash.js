@@ -53,17 +53,28 @@
     });
     if (diagnostics.length > 8) consoleWarn((diagnostics.length - 8) + ' additional SWF diagnostic(s) omitted.');
   }
-  // FlashVars: name=value pairs (a query string, or an object's own properties) set on the root as strings.
-  function setRootVariables(root, variables) {
-    if (variables === undefined || variables === null || variables === '') return;
-    var pairs = typeof variables === 'string' ? M.parseVariables(variables.replace(/^\?/, ''))
-      : Object.keys(variables).map(function (k) { return [k, variables[k]]; });
+  var MAX_FLASHVARS_LENGTH = 1024 * 1024;
+  /* FlashVars as [[name, value], ...] strings, in order: a query string ("a=1&b=x+y", '+' a space, %XX
+     escapes decoded as UTF-8, else Latin-1; a pair without "=" has an empty value; empty names are dropped), an
+     array of [name, value] pairs, or an object's own properties. A repeated name keeps its last value when it
+     is set. Longer query strings than MAX_FLASHVARS_LENGTH are refused. */
+  function flashVarsOf(variables) {
+    if (variables === undefined || variables === null || variables === '') return [];
+    if (typeof variables === 'string') {
+      if (variables.length > MAX_FLASHVARS_LENGTH) throw playerError('INVALID_OPTION', 'FlashVars are longer than ' + MAX_FLASHVARS_LENGTH + ' characters');
+      return M.parseVariables(variables.replace(/^\?/, ''));
+    }
+    if (Array.isArray(variables)) return variables.filter(Array.isArray).map(function (p) { return [String(p[0]), String(p[1])]; });
+    return Object.keys(variables).map(function (k) { return [k, String(variables[k])]; });
+  }
+  // FlashVars set on the root as strings, before its first frame (ActionScript 1 and 2).
+  function setRootVariables(root, pairs) {
     var rt = M.runtimeOf(root.env.scripts);
     pairs.forEach(function (p) { M.setMember(rt, root, String(p[0]), String(p[1])); });
   }
   delete global.RetroFlashModules;
 
-  var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1, navigate: 1, call: 1, fscommand: 1, callbacks: 1, interaction: 1 };
+  var EVENTS = { load: 1, frame: 1, warning: 1, error: 1, end: 1, navigate: 1, call: 1, fscommand: 1, callbacks: 1, interaction: 1, destroy: 1 };
   var MAX_INTERACTION_LOG = 100;
   /* The reader lists ActionScript tags as unsupported (it never runs them); the player runs AVM1 itself, and
      the AVM2 subset of avm2/, reporting at run time what it cannot run. */
@@ -111,6 +122,8 @@
       throw playerError('INVALID_OPTION', 'options.audio must be false or an audio backend with a play method');
     }
     if (options.volume !== undefined && !isVolume(options.volume)) throw playerError('INVALID_OPTION', 'options.volume must be a number from 0 to 1');
+    if (options.onFSCommand !== undefined && options.onFSCommand !== null && typeof options.onFSCommand !== 'function') throw playerError('INVALID_OPTION', 'options.onFSCommand must be a function');
+    if (options.maxBridgeDepth !== undefined && !(Number.isInteger(options.maxBridgeDepth) && options.maxBridgeDepth > 0)) throw playerError('INVALID_OPTION', 'options.maxBridgeDepth must be a positive integer');
     this.canvas = options.canvas;
     // host: handles page requests from the movie (navigate, call, fscommand, load, objectID).
     this.host = options.host || null;
@@ -129,11 +142,20 @@
       scaleMode: scaleModeOf(options.scaleMode),
       align: alignOf(options.align),
       width: cssLengthOf(options.width, 'width'),
-      height: cssLengthOf(options.height, 'height')
+      height: cssLengthOf(options.height, 'height'),
+      // Nested calls across the page boundary, both ways (ExternalInterface); deeper ones are refused.
+      maxBridgeDepth: options.maxBridgeDepth || 32,
+      // The plugin's emulated version (FlashVersion, $version): 'major,minor,build,revision'.
+      flashVersion: options.flashVersion ? String(options.flashVersion) : M.DEFAULT_FLASH_VERSION,
+      // FSCommands a standalone projector acted on (allowscale, fullscreen, quit) change the player too.
+      projectorCommands: !!options.projectorCommands
     };
     this.id = nextInstanceId++;
     // The stage in the canvas: device pixels per twip (sx, sy) and offset (tx, ty); set by resize().
     this.view = null;
+    // The part of the stage shown (the plugin's Zoom, Pan and SetZoomRect), in twips; null for the whole stage.
+    this.viewRect = null;
+    this.pluginAPI = null;
     this.display = null;
     // Budgets against hostile files: maxNesting, maxInstances, maxBitmapPixels, maxTotalBitmapPixels,
     // maxActionBlocks and maxActionSteps (RetroFlash.defaultLimits).
@@ -171,6 +193,8 @@
       global.addEventListener('resize', onResize);
       this.domHandlers.push(['resize', onResize, global]);
     }
+    if (options.onFSCommand) this.addFSCommandHandler(options.onFSCommand);
+    if (this.options.projectorCommands) this.addFSCommandHandler(function (command, args) { self.projectorCommand(command, args); });
     instances.push(this);
   }
   /* Pointer and keyboard on the canvas drive the movie's buttons. The canvas gets focus when pressed. Browsers
@@ -266,33 +290,116 @@
   };
   Player.prototype.getInteractionLog = function () { return this.interactionLog.slice(); };
   Player.prototype.clearInteractionLog = function () { this.interactionLog.length = 0; return this; };
+  /* Runs `body(env, root)` for the page (a callback, a plugin method) and gives its result. When no script is
+     running the request gets its own budget, and what it queued runs and the movie is redrawn after it; a
+     request made while the movie is calling the page shares the running script's. */
+  Player.prototype.runExternal = function (body) {
+    this.assertUsable();
+    if (!this.root) throw playerError('NOT_LOADED', 'No movie loaded');
+    var env = this.env, scripts = env.scripts, outer = scripts.active === 0;
+    if (outer) { env.instances = 0; scripts.beginUpdate(); }
+    try {
+      return body(env, this.root);
+    } finally {
+      if (outer && this.env === env && this.root) {
+        scripts.run();
+        if (this.input && this.input.afterTick()) scripts.run();
+        this.render();
+        this.emit('frame', this.root.frame);
+      }
+    }
+  };
   /* Calls a function the movie registered with ExternalInterface.addCallback(name, ...), as a page called the
-     plugin's method. `args` (an array) and the result are converted between JavaScript and AVM1 values. When no
-     script is running the call gets its own budget, and the movie is redrawn after it; a call made while the
-     movie is calling the page shares the running script's. A name the movie did not register is reported as
-     browser:callbackMissing and gives undefined. */
+     plugin's method, and gives its result at once (never a Promise). `args` (an array) and the result are
+     converted between JavaScript and ActionScript values (avm1/external.js, avm2/api.js). A name the movie did
+     not register is reported as browser:callbackMissing and gives undefined; an ActionScript error is reported
+     and gives undefined, unless an ActionScript 3 movie set ExternalInterface.marshallExceptions, which throws
+     it to the caller. More than `maxBridgeDepth` nested calls between the page and the movie throw CALL_DEPTH. */
   Player.prototype.callback = function (name, args) {
     this.assertUsable();
     if (!this.root) throw playerError('NOT_LOADED', 'No movie loaded');
-    var env = this.env, scripts = env.scripts, entry = env.host.callbacks.get(String(name));
+    name = String(name);
+    var env = this.env, bridge = env.host, entry = bridge.callbacks.get(name);
     var list = Array.isArray(args) ? args : args === undefined ? [] : [args];
+    var log = { direction: 'incoming', channel: 'ExternalInterface.callback', status: 'called', name: name, argumentCount: list.length };
     if (!entry) {
-      this.recordInteraction({ direction: 'incoming', channel: 'ExternalInterface.callback', status: 'missing', name: String(name), argumentCount: list.length });
-      this.recordUnsupported('browser:callbackMissing', 'The page called a callback the movie did not register with ExternalInterface.addCallback.', String(name));
+      log.status = 'missing';
+      this.recordInteraction(log);
+      this.recordUnsupported('browser:callbackMissing', 'The page called a callback the movie did not register with ExternalInterface.addCallback.', name);
       return undefined;
     }
-    var rt = M.runtimeOf(scripts), outer = scripts.active === 0;
-    if (outer) { env.instances = 0; scripts.beginUpdate(); }
-    var value = scripts.invoke(entry.fn, entry.thisValue, list.map(function (a) { return M.fromHostValue(rt, a); }), 'callback ' + name);
-    var result = M.toHostValue(rt, value);
-    this.recordInteraction({ direction: 'incoming', channel: 'ExternalInterface.callback', status: 'called', name: String(name), argumentCount: list.length, resultType: result === null ? 'null' : typeof result });
-    if (outer && this.env === env && this.root) {
-      scripts.run();
-      if (this.input && this.input.afterTick()) scripts.run();
-      this.render();
-      this.emit('frame', this.root.frame);
+    if (!bridge.enter(name)) {
+      log.status = 'refused';
+      this.recordInteraction(log);
+      throw playerError('CALL_DEPTH', 'More than ' + bridge.maxDepth + ' nested calls between the page and the movie');
     }
+    var result;
+    try {
+      result = this.runExternal(function () {
+        if (entry.vm === 'avm2') return env.avm2 ? env.avm2.invokeCallback(entry.fn, list, 'callback ' + name) : undefined;
+        var rt = M.runtimeOf(env.scripts);
+        var value = env.scripts.invoke(entry.fn, entry.thisValue, list.map(function (a) { return M.fromHostValue(rt, a); }), 'callback ' + name);
+        return M.toHostValue(rt, value);
+      });
+    } catch (err) {
+      log.status = 'failed';
+      this.recordInteraction(log);
+      throw err;
+    } finally {
+      bridge.leave();
+    }
+    log.resultType = result === null ? 'null' : typeof result;
+    this.recordInteraction(log);
     return result;
+  };
+  /* Hears the movie's FSCommands (fscommand(), "FSCommand:" URLs) before the host page's `<objectID>_DoFSCommand`:
+     fn(command, args, player), both strings. A handler that returns true has handled the command: the host
+     is not asked. Handlers run in the order they were added. Returns a function that removes the handler. */
+  Player.prototype.addFSCommandHandler = function (fn) {
+    if (typeof fn !== 'function') throw playerError('INVALID_OPTION', 'addFSCommandHandler needs a function');
+    var self = this;
+    var listener = function (request) { if (fn(request.command, request.args, self) === true) request.preventDefault(); };
+    this.on('fscommand', listener);
+    return function () { self.off('fscommand', listener); };
+  };
+  /* The Player option projectorCommands: "allowscale" false shows the stage unscaled and true fits it again,
+     "fullscreen" asks the browser for full screen (which it grants only after a user gesture) or leaves it,
+     "quit" pauses the movie. Nothing else is done; "exec" never runs anything. */
+  Player.prototype.projectorCommand = function (command, args) {
+    var on = String(args).toLowerCase() !== 'false' && args !== '0', canvas = this.canvas, doc = canvas.ownerDocument || global.document;
+    switch (String(command).toLowerCase()) {
+      case 'allowscale': this.setScaleMode(on ? 'showAll' : 'noScale'); break;
+      case 'quit': this.pause(); break;
+      case 'fullscreen':
+        try {
+          if (on) {
+            var request = canvas.requestFullscreen || canvas.webkitRequestFullscreen;
+            if (request) { var pending = request.call(canvas); if (pending && pending.catch) pending.catch(function () {}); }
+          } else if (doc && (doc.fullscreenElement || doc.webkitFullscreenElement) === canvas) {
+            (doc.exitFullscreen || doc.webkitExitFullscreen).call(doc);
+          }
+        } catch (err) { /* the browser refuses full screen without a user gesture */ }
+        break;
+    }
+  };
+  // The legacy plugin methods for this player (interop/plugin-api.js), made on first use.
+  Player.prototype.getPluginAPI = function () {
+    return this.pluginAPI || (this.pluginAPI = M.createPluginAPI(this, { flashVersion: this.options.flashVersion }));
+  };
+  /* The part of the stage shown, in twips ({ x, y, width, height }), as the plugin's Zoom, Pan and SetZoomRect
+     set it; null shows the whole stage. Kept until the next load. */
+  Player.prototype.setViewRect = function (rect) {
+    this.assertUsable();
+    if (rect !== null && !(rect && rect.width > 0 && rect.height > 0 && isFinite(rect.x + rect.y + rect.width + rect.height))) {
+      throw playerError('INVALID_OPTION', 'the view rectangle must have a finite x, y and a positive width and height');
+    }
+    this.viewRect = rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null;
+    if (this.movie) { this.resize(); this.render(); }
+    return this;
+  };
+  Player.prototype.getViewRect = function () {
+    var r = this.viewRect;
+    return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
   };
   // The names the movie registered with ExternalInterface.addCallback.
   Player.prototype.getCallbacks = function () {
@@ -339,8 +446,8 @@
     this.assertUsable();
     if (options !== undefined && options !== null && typeof options !== 'object') throw playerError('INVALID_OPTION', 'load options must be an object');
     var variables = options ? options.variables : undefined;
-    if (variables !== undefined && variables !== null && typeof variables !== 'string' && typeof variables !== 'object') throw playerError('INVALID_OPTION', 'load options.variables must be a string or an object');
-    var movieOptions = { url: options && options.url ? String(options.url) : '', variables: variables };
+    if (variables !== undefined && variables !== null && typeof variables !== 'string' && typeof variables !== 'object') throw playerError('INVALID_OPTION', 'load options.variables must be a string, an array of pairs or an object');
+    var movieOptions = { url: options && options.url ? String(options.url) : '', variables: flashVarsOf(variables) };
     this.loggedErrors = Object.create(null);
     this.loggedUnsupported = Object.create(null);
     if (!global.SWFReader) throw playerError('MISSING_READER', 'Load swf-reader.js before retroflash.js');
@@ -373,6 +480,7 @@
       if (superseded()) { movie.release(); return null; }
       this.movie = movie;
       this.movieOptions = movieOptions;
+      this.viewRect = null;
       this.audio.prepare(movie);
       this.fps = swf.fps > 0 ? swf.fps : 12;
       if (!(swf.fps > 0)) this.recordUnsupported('timeline:zeroFps', 'The file declares 0 fps; playing at 12 fps.', 'header');
@@ -419,16 +527,19 @@
     return this;
   };
   // Where the stage goes in the canvas: device pixels per twip and the offset of its top left corner.
+  /* With a view rectangle (setViewRect: the plugin's Zoom) that rectangle is fitted instead of the stage, as
+     with showAll when the scale mode is noScale. */
   Player.prototype.fitStage = function () {
-    var b = this.movie.swf.bounds, mode = this.options.scaleMode, align = this.options.align;
-    var w = Math.max(1, b.xmaxTwips - b.xminTwips), h = Math.max(1, b.ymaxTwips - b.yminTwips);
+    var b = this.movie.swf.bounds, mode = this.options.scaleMode, align = this.options.align, r = this.viewRect;
+    var x0 = r ? r.x : b.xminTwips, y0 = r ? r.y : b.yminTwips;
+    var w = Math.max(1, r ? r.width : b.xmaxTwips - b.xminTwips), h = Math.max(1, r ? r.height : b.ymaxTwips - b.yminTwips);
     var W = this.canvas.width, H = this.canvas.height, sx = W / w, sy = H / h;
-    if (mode === 'showAll') sx = sy = Math.min(sx, sy);
+    if (mode === 'showAll' || (mode === 'noScale' && r)) sx = sy = Math.min(sx, sy);
     else if (mode === 'noBorder') sx = sy = Math.max(sx, sy);
     else if (mode === 'noScale') { sx = W / this.display.width / 20; sy = H / this.display.height / 20; }
     var ax = align.indexOf('L') >= 0 ? 0 : align.indexOf('R') >= 0 ? 1 : 0.5;
     var ay = align.indexOf('T') >= 0 ? 0 : align.indexOf('B') >= 0 ? 1 : 0.5;
-    return { sx: sx, sy: sy, tx: (W - w * sx) * ax, ty: (H - h * sy) * ay };
+    return { sx: sx, sy: sy, tx: (W - w * sx) * ax - (x0 - b.xminTwips) * sx, ty: (H - h * sy) * ay - (y0 - b.yminTwips) * sy };
   };
   /* Changes how the stage fits the canvas (see the Player options scaleMode and align); null for the canvas to
      take the size of the stage again. align is kept when it is not given. */
@@ -479,6 +590,8 @@
       interaction: function (entry) { if (self.env === env) self.recordInteraction(entry); }
     });
     env.url = this.movieOptions.url || '';
+    env.parameters = this.movieOptions.variables || []; // FlashVars, for ActionScript 3 (LoaderInfo.parameters)
+    env.host.maxDepth = this.options.maxBridgeDepth;
     env.host.onCallbacks = function (names) { if (self.env === env) self.emit('callbacks', names); };
     if (previous && previous.host && previous.host.callbacks.size) this.emit('callbacks', []);
     // A load that finishes while the movie is not playing is shown at once; while playing, at the next frame.
@@ -503,7 +616,7 @@
       // ActionScript 3: the DoABC code is loaded and the document class wraps the root before its first frame.
       if (this.env.avm2) this.env.avm2.start(this.root);
     } else {
-      setRootVariables(this.root, this.movieOptions.variables);
+      setRootVariables(this.root, env.parameters);
     }
     this.root.gotoFrame(1);
     this.env.scripts.run();
@@ -657,8 +770,11 @@
       }))
     };
   };
+  // Ends the player for good. 'destroy' listeners hear it first (attachLegacyInterface removes its methods then).
   Player.prototype.destroy = function () {
     var canvas = this.canvas;
+    if (this.state === 'destroyed') return;
+    this.emit('destroy', this);
     this.pause();
     this.domHandlers.forEach(function (h) { (h[2] || canvas).removeEventListener(h[0], h[1]); });
     this.domHandlers = [];
@@ -735,6 +851,15 @@
     defaultLimits: DEFAULT_LIMITS,
     createBrowserHost: M.createBrowserHost,
     createWebAudioBackend: M.createWebAudioBackend,
+    // The legacy plugin scripting methods of a player, and their installation on a page element (interop/plugin-api.js).
+    createPluginAPI: function (player, options) { return M.createPluginAPI(player, options || { flashVersion: player.options.flashVersion }); },
+    attachLegacyInterface: function (element, player, options) {
+      return M.attachLegacyInterface(element, player, options || { flashVersion: player.options.flashVersion });
+    },
+    // The plugin's ExternalInterface XML (interop/flash-xml.js): values and <invoke> requests, never evaluated.
+    flashXML: Object.freeze({
+      toXML: M.toXMLValue, fromXML: M.fromXMLValue, invoke: M.invokeToXML, parseInvoke: M.parseInvoke, toJSLiteral: M.toJSLiteral
+    }),
     // Building blocks of every module, exposed for tests and tooling; not a stable API.
     internals: Object.freeze(Object.assign({}, M))
   });

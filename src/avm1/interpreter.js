@@ -331,6 +331,21 @@
     guarded(this, label || 'callback', function () { result = callValue(self, fn, thisValue, args, null); });
     return result;
   };
+  /* Runs `body` as the page's request (the legacy plugin methods: GetVariable, TGetProperty, ...): values that
+     call ActionScript (toString, valueOf) run under the same budgets and reports as scripts. */
+  ActionScheduler.prototype.guard = function (label, body) { guarded(this, label, body); };
+  /* Runs the frame scripts of frame `n` of `clip` now, without going there (the plugin's TCallFrame and
+     TCallLabel, as the Call action does). False when there is no such frame. */
+  ActionScheduler.prototype.callFrame = function (clip, n, label) {
+    if (!(n >= 1 && n <= clip.frameCount())) return false;
+    var self = this;
+    guarded(this, label, function () {
+      clip.def.frames[n - 1].forEach(function (tag) {
+        if (tag.code === 12) new Activation(self, clip, self.codeOf(tag, clip), label).run();
+      });
+    });
+    return true;
+  };
   /* Runs one action block in the context of `clip` (the timeline that holds a frame script, or a button's
      parent). A block that decoded no record (an empty block, or one met after the decoding budget was spent)
      is not kept in the cache: the budget does not pay for it. */

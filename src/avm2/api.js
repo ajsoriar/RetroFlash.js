@@ -15,7 +15,7 @@
 
   /* Defines a builtin class "package.Name" extending `superKlass`. spec: { dynamic, final, init(rt, obj, args),
      methods, getters, setters (name -> function (rt, self, args)), constants (name -> value), staticMethods,
-     staticGetters }. Its class object goes into the runtime's builtin global. */
+     staticGetters, staticSetters }. Its class object goes into the runtime's builtin global. */
   function defineNative(rt, qualified, superKlass, spec, klass) {
     var dot = qualified.lastIndexOf('.'), pkg = dot < 0 ? '' : qualified.slice(0, dot), short = qualified.slice(dot + 1);
     klass = klass || new Klass(pkg ? pkg + '::' + short : short, superKlass, spec.dynamic);
@@ -28,6 +28,7 @@
     Object.keys(spec.constants || {}).forEach(function (n) { statics.addSlot(publicKey(n), 0, null, spec.constants[n], true); });
     Object.keys(spec.staticMethods || {}).forEach(function (n) { statics.traits.set(publicKey(n), { kind: 'method', native: spec.staticMethods[n] }); });
     Object.keys(spec.staticGetters || {}).forEach(function (n) { statics.addAccessor(publicKey(n), 'get', { native: spec.staticGetters[n] }); });
+    Object.keys(spec.staticSetters || {}).forEach(function (n) { statics.addAccessor(publicKey(n), 'set', { native: spec.staticSetters[n] }); });
     var classObject = rt.classObjectFor(klass, statics);
     classObject.slots = statics.slotDefaults.slice();
     defineGlobal(rt, qkey(pkg, short), classObject);
@@ -41,8 +42,58 @@
 
   // ---- Values passed to and from the page (ExternalInterface) ----
 
-  function toHostValue(v) { return v instanceof AObject ? null : v; }
-  function fromHostValue(v) { return v === undefined || v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? v : null; }
+  var MAX_HOST_DEPTH = 64, MAX_HOST_VALUES = 100000;
+  /* An ActionScript 3 value for the page: primitives as they are, plain Objects (`new Object()`, or one the page
+     gave) as plain objects of their dynamic properties; any other object, functions and cycles are null. */
+  function toHostValue(rt, v, state) {
+    if (!(v instanceof AObject)) return v;
+    state = state || { depth: 0, seen: [], values: 0 };
+    if (v.klass !== rt.objectKlass || state.depth >= MAX_HOST_DEPTH || ++state.values > MAX_HOST_VALUES || state.seen.indexOf(v) >= 0) return null;
+    var out = {};
+    state.seen.push(v);
+    state.depth++;
+    if (v.dyn) v.dyn.forEach(function (item, name) {
+      Object.defineProperty(out, String(name), { value: toHostValue(rt, item, state), enumerable: true, writable: true, configurable: true });
+    });
+    state.depth--;
+    state.seen.pop();
+    return out;
+  }
+  /* A page value for ActionScript 3: primitives as they are (a BigInt as a number, a Date as its time in
+     milliseconds), plain objects as Objects of their own enumerable data properties (getters are never
+     called). There is no Array class in the runtime yet: an array is null, reported as avm2:externalArray.
+     Functions and symbols are undefined; cycles and values past the limits are null. */
+  function fromHostValue(rt, v, state) {
+    switch (typeof v) {
+      case 'undefined': case 'boolean': case 'number': case 'string': return v;
+      case 'bigint': return Number(v);
+      case 'object': break;
+      default: return undefined;
+    }
+    if (v === null) return null;
+    if (v instanceof Date) return v.getTime();
+    if (Array.isArray(v)) {
+      rt.reportOnce('avm2:externalArray', 'The page gave an array to ActionScript 3, which has no Array class here yet; it reads as null.', 'ExternalInterface');
+      return null;
+    }
+    state = state || { depth: 0, seen: [], values: 0 };
+    if (state.depth >= MAX_HOST_DEPTH || ++state.values > MAX_HOST_VALUES || state.seen.indexOf(v) >= 0) return null;
+    var obj = new AObject(rt.objectKlass), dyn = obj.dyn = new Map();
+    state.seen.push(v);
+    state.depth++;
+    try {
+      Object.keys(v).forEach(function (name) {
+        var d = Object.getOwnPropertyDescriptor(v, name);
+        dyn.set(name, d && 'value' in d ? fromHostValue(rt, d.value, state) : null);
+      });
+    } catch (err) {
+      return null;
+    } finally {
+      state.depth--;
+      state.seen.pop();
+    }
+    return obj;
+  }
 
   // Event types the player itself sends (from button pointer events); listeners for other player events are reported.
   var MOUSE_EVENTS = { click: 1, mouseDown: 1, mouseUp: 1, mouseOver: 1, mouseOut: 1, rollOver: 1, rollOut: 1 };
@@ -132,7 +183,9 @@
       getters: {
         name: function (rt, self) { return self.display && self.display.name !== undefined ? self.display.name : null; },
         parent: function (rt, self) { return movie.parentOf(self); },
-        visible: function (rt, self) { return !self.display || self.display.visible !== false; }
+        visible: function (rt, self) { return !self.display || self.display.visible !== false; },
+        // Every display object of the movie shares the main movie's LoaderInfo (no Loader yet).
+        loaderInfo: function () { return movie.loaderInfo(); }
       },
       setters: { visible: function (rt, self, args) { if (self.display) self.display.visible = toBoolean(arg(args, 0)); } }
     });
@@ -226,30 +279,93 @@
       }
     }));
 
+    // ---- flash.system ----
+    // fscommand(command, args = ""): to the page's FSCommand handlers (Player events, `<objectID>_DoFSCommand`).
+    defineGlobal(rt, qkey('flash.system', 'fscommand'), rt.makeFunction({
+      native: function (rt, self, args) {
+        var command = arg(args, 0);
+        if (command === null || command === undefined) throw new Avm2Error('TypeError', 'Error #2007: Parameter command must be non-null.');
+        M.hostOf(scheduler).fscommand(toStr(command), toStr(arg(args, 1, '')));
+      }
+    }));
+
+    /* Security: allowDomain and its kin grant nothing here. What a movie may do on the page is the page's
+       decision (createBrowserHost: trust, allowedFunctions, allowScriptAccess), never the movie's; the calls are
+       accepted, so the scripts that make them go on, and reported once. */
+    function securityNoop(rt, self, args) {
+      rt.reportOnce('browser:allowDomain', 'Security.allowDomain and similar calls have no effect: the page, not the movie, decides what the movie may do.', args.map(toStr).join(', '));
+    }
+    defineNative(rt, 'flash.system.Security', rt.objectKlass, {
+      final: true,
+      init: function () { throw new Avm2Error('ArgumentError', 'Error #2012: Security class cannot be instantiated.'); },
+      constants: { REMOTE: 'remote', LOCAL_WITH_FILE: 'localWithFile', LOCAL_WITH_NETWORK: 'localWithNetwork', LOCAL_TRUSTED: 'localTrusted', APPLICATION: 'application' },
+      staticGetters: { sandboxType: function () { return 'remote'; } },
+      staticMethods: { allowDomain: securityNoop, allowInsecureDomain: securityNoop, loadPolicyFile: securityNoop }
+    });
+
     // ---- flash.external ----
+    function unavailable() { return new Avm2Error('Error', 'Error #2067: The ExternalInterface is not available in this container.'); }
     defineNative(rt, 'flash.external.ExternalInterface', rt.objectKlass, {
       final: true,
       init: function () { throw new Avm2Error('ArgumentError', 'Error #2012: ExternalInterface class cannot be instantiated.'); },
       staticGetters: {
         available: function () { return M.hostOf(scheduler).available; },
-        objectID: function () { return M.hostOf(scheduler).objectID; }
+        objectID: function () { return M.hostOf(scheduler).objectID; },
+        marshallExceptions: function () { return movie.marshallExceptions; }
+      },
+      staticSetters: {
+        marshallExceptions: function (rt, self, args) { movie.marshallExceptions = toBoolean(arg(args, 0)); }
       },
       staticMethods: {
-        // call(functionName, ...arguments): the page function's result (primitives; other values become null).
+        /* call(functionName, ...arguments): the page function's result, in the same call stack. A call the page
+           refuses (allowScriptAccess, an allowlist) throws SecurityError #2060; a page function that throws
+           gives null, or an Error with its message when marshallExceptions is true. */
         call: function (rt, self, args) {
           var bridge = M.hostOf(scheduler);
-          if (!bridge.available) throw new Avm2Error('Error', 'Error #2067: The ExternalInterface is not available in this container.');
+          if (!bridge.available) throw unavailable();
           var name = toStr(arg(args, 0));
-          var result = bridge.call({ kind: 'external', name: name, source: name, args: args.slice(1).map(toHostValue) });
-          return result ? fromHostValue(result.value) : null;
+          var result = bridge.call({ kind: 'external', name: name, source: name, args: args.slice(1).map(function (v) { return toHostValue(rt, v); }) });
+          if (result) return fromHostValue(rt, result.value);
+          var failure = bridge.lastError;
+          if (failure && failure.code === 'BLOCKED') throw new Avm2Error('SecurityError', 'Error #2060: Security sandbox violation: ExternalInterface caller cannot access the page (' + failure.message + ').');
+          if (failure && failure.code === 'CALL_FAILED' && movie.marshallExceptions) throw new Avm2Error('Error', failure.message);
+          return null;
         },
-        addCallback: function () { throw new Avm2Unsupported('avm2:addCallback', 'ExternalInterface.addCallback'); }
+        /* addCallback(functionName, closure): the page can call closure as the element's method functionName
+           (Player.callback). A second registration replaces the first; a null closure removes it. */
+        addCallback: function (rt, self, args) {
+          var bridge = M.hostOf(scheduler);
+          if (!bridge.available) throw unavailable();
+          var name = toStr(arg(args, 0)), closure = arg(args, 1, null);
+          if (closure === null || closure === undefined) return bridge.removeCallback(name);
+          if (!isFunction(closure)) throw new Avm2Error('TypeError', 'Error #1034: Type Coercion failed: cannot convert ' + toStr(closure) + ' to Function.');
+          bridge.addCallback(name, null, closure, 'avm2');
+        }
+      }
+    });
+
+    // ---- flash.display.LoaderInfo: the main movie's (FlashVars as `parameters`) ----
+    var loaderInfo = defineNative(rt, 'flash.display.LoaderInfo', eventDispatcher, {
+      init: function () { throw new Avm2Error('ArgumentError', 'Error #2012: LoaderInfo class cannot be instantiated.'); },
+      getters: {
+        parameters: function (rt, self) { return movie.parameters(); },
+        url: function () { return movie.env.url || null; },
+        loaderURL: function () { return movie.env.url || null; },
+        swfVersion: function () { return movie.env.version; },
+        actionScriptVersion: function () { return 3; },
+        frameRate: function () { return movie.movie.swf.fps; },
+        width: function () { return movie.movie.swf.width; },
+        height: function () { return movie.movie.swf.height; },
+        bytesLoaded: function () { return movie.movie.swf.declaredLength || 0; },
+        bytesTotal: function () { return movie.movie.swf.declaredLength || 0; },
+        contentType: function () { return 'application/x-shockwave-flash'; },
+        content: function () { return movie.root ? movie.wrapperFor(movie.root.displayObject(), null) : null; }
       }
     });
 
     return {
       eventDispatcher: eventDispatcher, event: eventKlass, mouseEvent: mouseEventKlass, displayObject: displayObject,
-      movieClip: movieClip, simpleButton: simpleButton, shape: shape, urlRequest: urlRequest
+      movieClip: movieClip, simpleButton: simpleButton, shape: shape, urlRequest: urlRequest, loaderInfo: loaderInfo
     };
   }
 
@@ -294,7 +410,48 @@
     this.classes = installNatives(this.rt, this);
     this.linked = new Map(); // character id -> Klass
     this.pointerEvents = null;
+    this.marshallExceptions = false; // ExternalInterface.marshallExceptions
+    this.info = null;
+    this.params = null;
   }
+  // The main movie's LoaderInfo, made on first need.
+  Avm2Movie.prototype.loaderInfo = function () {
+    return this.info || (this.info = new AObject(this.classes.loaderInfo));
+  };
+  /* LoaderInfo.parameters: the FlashVars (env.parameters, [[name, value], ...] in order, a repeated name keeping
+     its last value) as an Object of strings. */
+  Avm2Movie.prototype.parameters = function () {
+    if (!this.params) {
+      var obj = this.params = new AObject(this.rt.objectKlass), dyn = obj.dyn = new Map();
+      (this.env.parameters || []).forEach(function (p) { dyn.set(String(p[0]), String(p[1])); });
+    }
+    return this.params;
+  };
+  /* Calls a closure the movie registered with ExternalInterface.addCallback, for the page (Player.callback):
+     `args` and the result are page values. An ActionScript error is reported and gives undefined, or, when
+     marshallExceptions is true, is thrown to the page as an Error with its message. */
+  Avm2Movie.prototype.invokeCallback = function (fn, args, label) {
+    var rt = this.rt, scheduler = this.scheduler, depth = rt.depth, result, failure = null;
+    scheduler.active++;
+    try {
+      result = toHostValue(rt, rt.call(fn, null, args.map(function (a) { return fromHostValue(rt, a); })));
+    } catch (err) {
+      failure = err;
+    } finally {
+      scheduler.active--;
+      rt.depth = depth;
+    }
+    if (!failure) return result;
+    if (this.marshallExceptions && (failure instanceof Avm2Error || failure instanceof Avm2Throw)) {
+      var message = failure instanceof Avm2Error ? failure.type + ': ' + failure.message : toStr(failure.value);
+      this.fail(failure, label);
+      var thrown = new Error(message);
+      thrown.name = 'ActionScriptError';
+      throw thrown;
+    }
+    this.fail(failure, label);
+    return undefined;
+  };
   // The movie's name in diagnostics.
   Avm2Movie.prototype.label = function () {
     var url = this.env.url || '';

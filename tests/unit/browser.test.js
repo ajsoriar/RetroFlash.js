@@ -80,7 +80,7 @@ test('javascript:panorama(2) and (3) call the page function by name with a numbe
 test('FSCommand: the command and its arguments go to the host', async () => {
   const m = await start();
   m.click('fscommand');
-  assert.deepStrictEqual(m.asked.fscommand, [{ command: 'mensaje', args: 'hola' }]);
+  assert.deepStrictEqual(m.asked.fscommand, [{ command: 'mensaje', args: 'hola', projector: false }]);
 });
 
 test('GetURL2 with GET and POST sends the variables of the timeline the button is on', async () => {
@@ -229,7 +229,7 @@ test('ExternalInterface: call returns the page result, values convert both ways,
   player.on('callbacks', (names) => announced.push(names));
   await player.load(externalMovie());
   const v = (name) => player.root.variables.get(name);
-  assert.deepStrictEqual([v('r'), v('avail'), v('id'), v('t'), v('ok')], [5, true, 'prue004', 'x', true]);
+  assert.deepStrictEqual([v('r'), v('avail'), v('id'), v('t'), v('ok')], [5, true, undefined, 'x', true], 'objectID is ActionScript 3 only');
   assert.deepStrictEqual(calls.slice(0, 2), [
     { kind: 'external', name: 'sumar', args: [2, 3], source: 'sumar' },
     { kind: 'external', name: 'eco', args: [{ a: [1, 'x'] }], source: 'eco' }
@@ -265,7 +265,7 @@ test('ExternalInterface without a host: not available, call gives null, addCallb
   const player = headlessPlayer({});
   await player.load(externalMovie());
   const v = (name) => player.root.variables.get(name);
-  assert.deepStrictEqual([v('r'), v('avail'), v('id'), v('ok'), v('nested')], [null, false, null, false, null]);
+  assert.deepStrictEqual([v('r'), v('avail'), v('id'), v('ok'), v('nested')], [null, false, undefined, false, null]);
   assert.deepStrictEqual(player.getCallbacks(), []);
   player.destroy();
 });

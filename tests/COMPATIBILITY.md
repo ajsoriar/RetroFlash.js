@@ -208,6 +208,20 @@ These are covered in `unit/*.test.js`:
   - button clicks: `CLICK` listeners calling `navigateToURL(new URLRequest(...), "_self")` and `ExternalInterface.call` through the host, a listener of the Player's `navigate` event cancelling, a click outside every button, the interaction log; `ExternalInterface` without a host (Error #2067); `actions: false`;
   - a `SymbolClass` sprite whose constructor adds a frame script that loops with `gotoAndPlay(label)`;
   - failures reported with the movie, method, and bytecode offset while the timeline goes on: an unsupported instruction, an uncaught `ReferenceError`, a malformed block (the root then stays a plain `MovieClip`), an endless loop stopped by `maxActionSteps`, and recursion stopped by `maxCallDepth`.
+- **Page scripting** (`interop.test.js`; the ActionScript 2 movie of `fixtures/interop.js` and an ActionScript 3 movie assembled in the test, a stand-in page window, and `RetroFlash.createBrowserHost`; matrix in [`docs/interop/STATUS.md`](../docs/interop/STATUS.md)):
+  - `ExternalInterface.call` in both VMs: `test.add(2, 3)` gives 5 in the same call with `test` as `this`; Unicode; a missing function gives `null`; `available` for both, `objectID` and `marshallExceptions` for ActionScript 3 only;
+  - `addCallback` in both VMs, called as methods of the page element with a synchronous result; the AS2 `instance` as `this`; values both ways (NaN, ±Infinity, sparse arrays, nested objects, `Date`, cycles, getters never called, a 100-level value cut without a stack overflow); AS3 plain objects, arrays reported; an AS3 `null` closure removing a callback;
+  - `marshallExceptions` off and on, in both directions; a refused AS3 call throwing `SecurityError` #2060; `Security.allowDomain` accepted and reported;
+  - nested page → movie → page calls in order, and the `maxBridgeDepth` limit; `SetReturnValue` during and outside a movie call;
+  - FSCommand from `fscommand`, `"FSCommand:"` and `"fscommand:"` URLs and AS3 `flash.system.fscommand`: Player handlers first, then `<id>_DoFSCommand`, a handler that handles it, `<id>_FSCommand`, `exec` reported, projector commands;
+  - `javascript:` URLs: a known call with a number argument, other code refused, `trusted-eval` through the page's executor, `off`; untrusted movies and `allowedFunctions`;
+  - the plugin methods on real variables and timelines: `SetVariable`/`GetVariable` with dot and slash paths and `$version`, `GotoFrame` (zero-based, frame scripts run), `Rewind`/`Back`/`Forward`/`Play`/`StopPlay`, the `T*` methods with labels, `TCallFrame`/`TCallLabel` and property indexes, `Zoom`/`Pan`/`SetZoomRect`, `LoadMovie`, `CallFunction` (XML and JavaScript answers), and the XML parser's limits and refusals;
+  - FlashVars for ActionScript 2 (decoding, empty values, repeated names, length limit) and 3 (`loaderInfo.parameters`);
+  - two players with the same callback name, and disposal giving the element back as it was;
+  - `browser/legacy-autoplay.js` on a stand-in DOM: an `<object>` with an inner `<embed>` and a second `<embed>`, scripted by a page that makes no RetroFlash.js call;
+  - the ExternalInterface, `javascript:` and `CallFunction` paths run with `eval` and `Function` replaced by functions that throw.
+
+  `demo/interop/index.html` was also run in headless Chrome (current version) with a check script calling the plugin methods and callbacks on the element; every result matched. Not automated.
 - **Compatibility corpus** (`corpus.test.js`): the layer of each diagnostic; the version matrix below against Flash Player's rules (63 cells); the fixture matrix twice (identical runs) against its committed snapshot, with error messages compared by layer only because the zlib wording differs between Node versions; a rejected file failing in the parser layer, an uncaught ActionScript 3 error in the vm layer, and an unknown action and a `GetURL` landing in the vm and api layers. Loads (`load:`) are in the api layer.
 - **Text** (`text.test.js`, SWFs built in memory):
   - a DefineFont whose codes, name, and style come from DefineFontInfo;

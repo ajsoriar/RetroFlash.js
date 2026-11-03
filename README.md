@@ -50,7 +50,7 @@ An existing page can keep its Flash markup:
 Add the bundle:
 
 ```html
-<script src="node_modules/retroflash.js/dist/retroflash-1.1.0.min.js"></script>
+<script src="node_modules/retroflash.js/dist/retroflash-1.1.1.min.js"></script>
 ```
 
 Install the stable release from npm with `npm install retroflash.js`.
@@ -69,15 +69,16 @@ The code lives in [`src/`](./src/) as classic scripts with no dependencies:
 |---|---|
 | `src/swf-reader.js` | Parser (`SWFReader`, v0.6.0): FWS and CWS, a bounds-checked tag index, decoded placements, shapes, bitmap headers, fonts and text, buttons, filter lists, clip actions, and exports, and `inflate` |
 | `src/core/`, `src/display/`, `src/text/`, `src/avm1/`, `src/avm2/`, `src/audio/`, `src/input/`, `src/render/`, `src/browser/` | Player modules, including automatic playback of legacy Flash markup |
-| `src/retroflash.js` | Player API (`RetroFlash`, v1.1.0) |
+| `src/interop/` | The Flash plugin's page scripting methods and its ExternalInterface XML |
+| `src/retroflash.js` | Player API (`RetroFlash`, v1.1.1) |
 | `src/modules.json` | The load order of every script above |
 
-For use, build the single file `dist/retroflash-1.1.0.min.js`, which holds the reader and the player (see [Build](#build)):
+For use, build the single file `dist/retroflash-1.1.1.min.js`, which holds the reader and the player (see [Build](#build)):
 
 ```html
 <canvas id="stage"></canvas>
 <input id="file" type="file" accept=".swf">
-<script src="dist/retroflash-1.1.0.min.js"></script>
+<script src="dist/retroflash-1.1.1.min.js"></script>
 <script>
   var player = new RetroFlash.Player({ canvas: document.getElementById('stage') });
   document.getElementById('file').addEventListener('change', function (event) {
@@ -100,6 +101,24 @@ As with the Flash plugin, the page decides the size of the movie and the player 
 
 `window.RetroFlashConfig` can set `scaleMode`, `align` and `pixelRatio` for every element. A player created by hand fits the stage with the `scaleMode`, `align`, `width` and `height` options (any CSS length), or `player.setScaleMode()` and `player.setSize()`. Without `scaleMode` its canvas takes the size of the stage. `player.getLayout()` gives the canvas's CSS size and pixels, the scale and the offset of the stage.
 
+### Page scripts that talk to the movie
+
+The page's own JavaScript keeps working. The canvas that takes the place of an `<object>`/`<embed>` keeps its id and name and gets the plugin's methods and the movie's `ExternalInterface` callbacks:
+
+```html
+<object id="legacyMovie" data="movie.swf" type="application/x-shockwave-flash" width="550" height="400">
+  <param name="flashvars" value="level=3&amp;name=Guest">
+</object>
+<script>
+  function legacyMovie_DoFSCommand(command, args) { /* fscommand("ready", "yes") from the movie */ }
+  var movie = document.getElementById('legacyMovie');
+  movie.SetVariable('_root.message', 'Hello');  // GetVariable, GotoFrame, TGotoLabel, TCallFrame, Zoom, CallFunction, ...
+  movie.setMessage('Hello');                    // a function the movie registered with ExternalInterface.addCallback
+</script>
+```
+
+`ExternalInterface.call` (ActionScript 2 and 3), `fscommand`, `getURL("javascript:...")`, FlashVars (`_root` and `loaderInfo.parameters`) and the plugin's `CallFunction` XML work the same way, synchronously. Nothing a movie sends is evaluated as JavaScript: `javascript:` URLs run only as calls of page functions with literal arguments, unless the page provides its own executor. `window.RetroFlashConfig` can mark movies as untrusted and list the page functions they may call. See [docs/interop/STATUS.md](./docs/interop/STATUS.md) for the full matrix, the security model and the limits, and [`demo/interop/`](./demo/interop/index.html) for an unchanged legacy page.
+
 ### From the console
 
 - `RetroFlash.getInstances()`: the players on the page, with their id, element, URL, state, movie size, frame, layout and warning counts, and the `player` itself;
@@ -109,13 +128,14 @@ As with the Flash plugin, the page decides the size of the movie and the player 
 During development, source scripts can be loaded directly in a modern browser, in the order of `src/modules.json`. Those source demos are not the Chrome 38-targeted distribution bundle:
 
 - [`demo/player.html`](./demo/player.html): the player;
-- [`demo/index.html`](./demo/index.html): the structure inspector.
+- [`demo/index.html`](./demo/index.html): the structure inspector;
+- [`demo/interop/index.html`](./demo/interop/index.html): a Flash-era page scripting its movie, unchanged.
 
 See [`LIMITATIONS.md`](./LIMITATIONS.md) for current compatibility gaps.
 
 ## Compatibility
 
-The 1.1.0 browser bundle is built to run on Google Chrome 38 and later. SWF feature support depends on the coverage described in [`LIMITATIONS.md`](./LIMITATIONS.md).
+The 1.1.1 browser bundle is built to run on Google Chrome 38 and later. SWF feature support depends on the coverage described in [`LIMITATIONS.md`](./LIMITATIONS.md).
 
 ## Requirements
 
